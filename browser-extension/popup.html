@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Last Rich Presence Companion</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="panel">
+      <header class="top">
+        <div>
+          <h1>Last Rich Presence Companion</h1>
+          <p>Optional refinement layer for browser media.</p>
+        </div>
+        <span id="status-pill" class="pill waiting">Waiting</span>
+      </header>
+
+      <section class="card">
+        <label class="row">
+          <span class="label-wrap">
+            <span class="label">Enable Extension Hints</span>
+            <span class="hint">Use extension data when available</span>
+          </span>
+          <input id="enabled" type="checkbox" />
+        </label>
+      </section>
+
+      <section class="card">
+        <div class="title">Site Sources</div>
+        <div id="site-rows"></div>
+      </section>
+
+      <section class="card metrics">
+        <div class="metric">
+          <span class="k">Last hint</span>
+          <span id="metric-hint" class="v">None</span>
+        </div>
+        <div class="metric">
+          <span class="k">Active tabs</span>
+          <span id="metric-tabs" class="v">0</span>
+        </div>
+      </section>
+
+      <footer class="foot">
+        <span id="endpoint"></span>
+      </footer>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

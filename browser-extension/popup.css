@@ -1,0 +1,164 @@
+:root {
+  color-scheme: dark;
+  --bg: #111319;
+  --card: #1a1f2b;
+  --line: #2a3348;
+  --text: #e8eefb;
+  --muted: #9aa9c5;
+  --ok: #2bc574;
+  --warn: #f2b84b;
+  --accent: #61a8ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  width: 360px;
+  margin: 0;
+  font-family: "Segoe UI", "Inter", "Roboto", sans-serif;
+  background: radial-gradient(circle at top right, #1d2740 0%, var(--bg) 60%);
+  color: var(--text);
+}
+
+.panel {
+  padding: 14px;
+}
+
+.top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.top p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pill {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--warn);
+  background: #2a2420;
+}
+
+.pill.connected {
+  color: var(--ok);
+  background: #1f2d25;
+  border-color: #2d4f3a;
+}
+
+.pill.waiting {
+  color: var(--warn);
+  background: #2e2920;
+  border-color: #4d4030;
+}
+
+.card {
+  background: color-mix(in srgb, var(--card) 92%, black 8%);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
+.title {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+#site-rows {
+  max-height: 190px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+}
+
+.row.small {
+  min-height: 30px;
+}
+
+.row + .row {
+  border-top: 1px solid var(--line);
+}
+
+.label-wrap {
+  display: flex;
+  flex-direction: column;
+}
+
+.label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 1px;
+}
+
+input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 16px;
+  height: 16px;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.metric {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 7px;
+}
+
+.metric .k {
+  display: block;
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.metric .v {
+  display: block;
+  margin-top: 5px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.foot {
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}

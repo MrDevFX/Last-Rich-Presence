@@ -1,0 +1,147 @@
+{
+  "manifest_version": 3,
+  "name": "Last Rich Presence Companion",
+  "version": "0.1.0",
+  "description": "Optional browser hint provider for Last Rich Presence.",
+  "permissions": [
+    "tabs",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "*://youtube.com/*",
+    "*://www.youtube.com/*",
+    "*://m.youtube.com/*",
+    "*://youtu.be/*",
+    "*://music.youtube.com/*",
+    "*://open.spotify.com/*",
+    "*://soundcloud.com/*",
+    "*://*.soundcloud.com/*",
+    "*://music.apple.com/*",
+    "*://music.amazon.com/*",
+    "*://music.amazon.in/*",
+    "*://*.music.amazon.com/*",
+    "*://*.music.amazon.in/*",
+    "*://deezer.com/*",
+    "*://www.deezer.com/*",
+    "*://*.deezer.com/*",
+    "*://listen.tidal.com/*",
+    "*://tidal.com/*",
+    "*://*.tidal.com/*",
+    "*://jiosaavn.com/*",
+    "*://www.jiosaavn.com/*",
+    "*://*.jiosaavn.com/*",
+    "*://saavn.com/*",
+    "*://*.saavn.com/*",
+    "*://gaana.com/*",
+    "*://www.gaana.com/*",
+    "*://*.gaana.com/*",
+    "*://wynk.in/*",
+    "*://*.wynk.in/*",
+    "*://bandcamp.com/*",
+    "*://*.bandcamp.com/*",
+    "*://mixcloud.com/*",
+    "*://www.mixcloud.com/*",
+    "*://twitch.tv/*",
+    "*://www.twitch.tv/*",
+    "*://player.twitch.tv/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Last Rich Presence Companion",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://youtube.com/*",
+        "*://www.youtube.com/*",
+        "*://m.youtube.com/*",
+        "*://youtu.be/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://music.youtube.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://open.spotify.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://soundcloud.com/*",
+        "*://*.soundcloud.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://music.apple.com/*",
+        "*://music.amazon.com/*",
+        "*://music.amazon.in/*",
+        "*://*.music.amazon.com/*",
+        "*://*.music.amazon.in/*",
+        "*://deezer.com/*",
+        "*://www.deezer.com/*",
+        "*://*.deezer.com/*",
+        "*://listen.tidal.com/*",
+        "*://tidal.com/*",
+        "*://*.tidal.com/*",
+        "*://jiosaavn.com/*",
+        "*://www.jiosaavn.com/*",
+        "*://*.jiosaavn.com/*",
+        "*://saavn.com/*",
+        "*://*.saavn.com/*",
+        "*://gaana.com/*",
+        "*://www.gaana.com/*",
+        "*://*.gaana.com/*",
+        "*://wynk.in/*",
+        "*://*.wynk.in/*",
+        "*://bandcamp.com/*",
+        "*://*.bandcamp.com/*",
+        "*://mixcloud.com/*",
+        "*://www.mixcloud.com/*",
+        "*://twitch.tv/*",
+        "*://www.twitch.tv/*",
+        "*://player.twitch.tv/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.VC.db
+
+# Build output
+x64/
+x86/
+ARM64/
+Debug/
+Release/
+Generated Files/
+Last Ric.*/
+*.ipch
+*.pdb
+*.ilk
+*.obj
+*.idb
+
+# MSIX/Appx output
+AppPackages/
+BundleArtifacts/
+
+# Logs and temp
+*.log
+*.tmp
+
+# NuGet package cache in legacy layout
+packages/
