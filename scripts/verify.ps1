@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("Debug", "Release")]
+    [ValidateSet("Debug", "Release", "Release-Inno", "Release-MSIX")]
     [string]$Configuration = "Debug",
 
     [ValidateSet("x64", "x86", "ARM64")]

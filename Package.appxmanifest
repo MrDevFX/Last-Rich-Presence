@@ -10,8 +10,8 @@
 
   <Identity
     Name="a25c9095-7bcb-4ba4-ab76-bae9e17cc1be"
-    Publisher="CN=Dev"
-    Version="1.0.0.0" />
+    Publisher="CN=Last Rich Presence"
+    Version="2.0.0.0" />
 
   <mp:PhoneIdentity PhoneProductId="a25c9095-7bcb-4ba4-ab76-bae9e17cc1be" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
@@ -32,8 +32,8 @@
 
   <Applications>
     <Application Id="App"
-      Executable="$targetnametoken$.exe"
-      EntryPoint="$targetentrypoint$">
+      Executable="Last_Rich_Presence.exe"
+      EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements
         DisplayName="Last Rich Presence"
         Description="Last Rich Presence"
@@ -44,7 +44,7 @@
         <uap:SplashScreen Image="Assets\SplashScreen.png" />
       </uap:VisualElements>
       <Extensions>
-        <desktop:Extension Category="windows.startupTask" Executable="$targetnametoken$.exe" EntryPoint="Windows.FullTrustApplication">
+        <desktop:Extension Category="windows.startupTask" Executable="Last_Rich_Presence.exe" EntryPoint="Windows.FullTrustApplication">
           <desktop:StartupTask TaskId="LastRichPresenceStartupTask" Enabled="false" DisplayName="Last Rich Presence" />
         </desktop:Extension>
       </Extensions>

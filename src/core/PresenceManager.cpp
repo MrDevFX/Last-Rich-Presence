@@ -6,6 +6,16 @@
 
 namespace
 {
+    bool IsSupportedActivityType(int value)
+    {
+        return value == 0 || value == 2 || value == 3 || value == 5;
+    }
+
+    int ResolveActivityTypeOrDefault(int overrideType, int fallbackType)
+    {
+        return IsSupportedActivityType(overrideType) ? overrideType : fallbackType;
+    }
+
     std::wstring ToLowerCopy(std::wstring value)
     {
         for (auto& c : value) c = towlower(c);
@@ -185,6 +195,11 @@ void PresenceManager::SetShowSource(bool show)     { m_showSource = show; }
 void PresenceManager::SetSensitiveKeywordFilter(bool enabled) { m_sensitiveKeywordFilter = enabled; }
 void PresenceManager::SetStrictBrowserPrivacy(bool enabled) { m_strictBrowserPrivacy = enabled; }
 
+void PresenceManager::SetActivityTypeOverride(int type)
+{
+    m_activityTypeOverride = IsSupportedActivityType(type) ? type : -1;
+}
+
 void PresenceManager::SetBlockedAppSiteTerms(std::vector<std::wstring> terms)
 {
     std::lock_guard<std::mutex> lock(m_blockedTermsMutex);
@@ -346,18 +361,10 @@ void PresenceManager::RefreshPresence()
 
 void PresenceManager::BuildAndSendIdlePresence()
 {
-    DiscordPresenceData presence;
-    presence.activityType = 0;
-    presence.playing = false;
-    presence.name = "Last Rich Presence";
-    presence.details = "Ready to share activity";
-    presence.state = "Waiting for media or app context";
-    presence.largeImageKey = "music";
-    presence.largeImageText = "Last Rich Presence";
-    presence.smallImageKey.clear();
-    presence.smallImageText.clear();
-
-    m_discord.UpdatePresence(presence);
+    // Media idle should clear the media app activity entirely so separate
+    // app IDs (Creativity/Productive) can surface without an always-on
+    // placeholder media card.
+    m_discord.ClearPresence();
 }
 
 void PresenceManager::BuildAndSendPresence(const MediaInfo& info)
@@ -395,7 +402,7 @@ void PresenceManager::BuildAndSendPresence(const MediaInfo& info)
     {
         presence.details = "Hidden content";
         presence.playing = info.isPlaying;
-        presence.activityType = 3;
+        presence.activityType = ResolveActivityTypeOrDefault(m_activityTypeOverride.load(), 3);
         presence.name = "Private Media";
 
         std::string state = info.isPlaying ? "Private session" : "Private session - Paused";
@@ -424,14 +431,15 @@ void PresenceManager::BuildAndSendPresence(const MediaInfo& info)
         (lowerSource == L"youtube") ||
         (lowerSource == L"twitch");
 
-    // Activity type: 2 = Listening, 3 = Watching
-    presence.activityType = isVideoSource ? 3 : 2;
+    // Activity type: 2 = Listening, 3 = Watching, or user override.
+    int defaultActivityType = isVideoSource ? 3 : 2;
+    presence.activityType = ResolveActivityTypeOrDefault(m_activityTypeOverride.load(), defaultActivityType);
 
     // Name: what appears after "Listening to" / "Watching"
     if (!sourceDisplay.empty())
-        presence.name = WideToUtf8(sourceDisplay);
+        presence.name = ClampDiscordField(WideToUtf8(sourceDisplay));
     else
-        presence.name = isVideoSource ? "Video" : "Music";
+        presence.name = ClampDiscordField(isVideoSource ? "Video" : "Music");
 
     // State: artist, with paused indicator when paused
     std::wstring stateText = info.artist.empty() ? L"Unknown Artist" : info.artist;
@@ -441,12 +449,12 @@ void PresenceManager::BuildAndSendPresence(const MediaInfo& info)
 
     // Album tooltip on large image
     if (!info.albumTitle.empty())
-        presence.largeImageText = WideToUtf8(info.albumTitle);
+        presence.largeImageText = ClampDiscordField(WideToUtf8(info.albumTitle));
 
     // Source player icon (small image) — only when toggle is on
     if (m_showSource && !info.sourceDisplayName.empty())
     {
-        presence.smallImageText = WideToUtf8(info.sourceDisplayName);
+        presence.smallImageText = ClampDiscordField(WideToUtf8(info.sourceDisplayName));
         presence.smallImageKey = GetPlayerAssetKey(info.sourceDisplayName);
     }
 
@@ -461,9 +469,9 @@ void PresenceManager::BuildAndSendPresence(const MediaInfo& info)
         {
             presence.largeImageKey = m_artUrl;
             if (!info.albumTitle.empty())
-                presence.largeImageText = WideToUtf8(info.albumTitle);
+                presence.largeImageText = ClampDiscordField(WideToUtf8(info.albumTitle));
             else if (!info.sourceDisplayName.empty())
-                presence.largeImageText = WideToUtf8(info.sourceDisplayName);
+                presence.largeImageText = ClampDiscordField(WideToUtf8(info.sourceDisplayName));
         }
     }
 
@@ -498,6 +506,13 @@ void PresenceManager::FetchAlbumArtAsync(const MediaInfo& info)
         std::lock_guard lock(m_artMutex);
         if (artKey == m_artCacheKey && !m_artUrl.empty())
             return; // Already have art for this track
+
+        if (artKey != m_artCacheKey)
+        {
+            // Avoid briefly showing stale art while a new track's art is resolving.
+            m_artUrl.clear();
+            m_artCacheKey.clear();
+        }
     }
 
     ArtFetchJob job;

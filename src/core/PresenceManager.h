@@ -34,6 +34,7 @@ public:
     void SetStrictBrowserPrivacy(bool enabled);
     void SetSuppressBrowserAlbumArt(bool enabled);
     void SetBlockedAppSiteTerms(std::vector<std::wstring> terms);
+    void SetActivityTypeOverride(int type);
 
     bool IsConnected() const;
 
@@ -96,6 +97,7 @@ private:
     std::atomic<bool> m_sensitiveKeywordFilter{true};
     std::atomic<bool> m_strictBrowserPrivacy{false};
     std::atomic<bool> m_suppressBrowserAlbumArt{false};
+    std::atomic<int> m_activityTypeOverride{-1};
     std::mutex m_blockedTermsMutex;
     std::vector<std::wstring> m_blockedAppSiteTerms;
 };

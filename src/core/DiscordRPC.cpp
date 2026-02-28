@@ -74,6 +74,7 @@ void DiscordRPC::DisconnectPipe()
         m_pipe = INVALID_HANDLE_VALUE;
     }
     m_lastPresenceHadTimestamps = false;
+    m_lastActivityPid = 0;
 }
 
 bool DiscordRPC::WritePipe(uint32_t opcode, const std::string& data)
@@ -148,7 +149,17 @@ bool DiscordRPC::ReadPipe(uint32_t& opcode, std::string& data)
 
 // --- DiscordRPC implementation ---
 
-DiscordRPC::DiscordRPC() {}
+DiscordRPC::DiscordRPC()
+    : DiscordRPC(std::string(APP_ID))
+{
+}
+
+DiscordRPC::DiscordRPC(std::string appId)
+    : m_appId(std::move(appId))
+{
+    if (m_appId.empty())
+        m_appId = APP_ID;
+}
 
 DiscordRPC::~DiscordRPC()
 {
@@ -164,7 +175,6 @@ void DiscordRPC::Initialize()
         m_worker.join();
     }
 
-    m_appId = APP_ID;
     m_running = true;
     m_worker = std::thread(&DiscordRPC::WorkerThread, this);
 }
@@ -337,7 +347,14 @@ void DiscordRPC::SendPendingPresence()
             DWORD available = 0;
             if (PeekNamedPipe(m_pipe, nullptr, 0, nullptr, &available, nullptr) && available > 0)
             {
-                ReadPipe(op, response);
+                if (!ReadPipe(op, response))
+                {
+                    DisconnectPipe();
+                    m_connected = false;
+                    requeuePending();
+                    return false;
+                }
+
                 if (op == OP_CLOSE)
                 {
                     DisconnectPipe();
@@ -352,14 +369,22 @@ void DiscordRPC::SendPendingPresence()
         return true;
     };
 
+    const uint32_t fallbackPid = GetCurrentProcessId();
+    const uint32_t activityPid =
+        (presence.targetPid != 0) ? presence.targetPid :
+        (m_lastActivityPid != 0 ? m_lastActivityPid : fallbackPid);
+
     if (clearReq)
     {
         std::ostringstream clearPayload;
-        clearPayload << "{\"cmd\":\"SET_ACTIVITY\",\"args\":{\"pid\":" << GetCurrentProcessId()
+        clearPayload << "{\"cmd\":\"SET_ACTIVITY\",\"args\":{\"pid\":" << activityPid
                      << ",\"activity\":null},\"nonce\":\"" << ++m_nonce << "\"}";
 
         if (sendFrameAndPoll(clearPayload.str()))
+        {
             m_lastPresenceHadTimestamps = false;
+            m_lastActivityPid = 0;
+        }
         return;
     }
 
@@ -368,7 +393,7 @@ void DiscordRPC::SendPendingPresence()
     if (!hasTimestamps && m_lastPresenceHadTimestamps)
     {
         std::ostringstream clearPayload;
-        clearPayload << "{\"cmd\":\"SET_ACTIVITY\",\"args\":{\"pid\":" << GetCurrentProcessId()
+        clearPayload << "{\"cmd\":\"SET_ACTIVITY\",\"args\":{\"pid\":" << activityPid
                      << ",\"activity\":null},\"nonce\":\"" << ++m_nonce << "\"}";
 
         if (!sendFrameAndPoll(clearPayload.str()))
@@ -376,7 +401,7 @@ void DiscordRPC::SendPendingPresence()
     }
 
     std::ostringstream p;
-    p << "{\"cmd\":\"SET_ACTIVITY\",\"args\":{\"pid\":" << GetCurrentProcessId();
+    p << "{\"cmd\":\"SET_ACTIVITY\",\"args\":{\"pid\":" << activityPid;
 
     p << ",\"activity\":{";
 
@@ -429,5 +454,8 @@ void DiscordRPC::SendPendingPresence()
     p << "},\"nonce\":\"" << ++m_nonce << "\"}";
 
     if (sendFrameAndPoll(p.str()))
+    {
         m_lastPresenceHadTimestamps = hasTimestamps;
+        m_lastActivityPid = activityPid;
+    }
 }

@@ -3,11 +3,42 @@
 #include "MainWindow.g.h"
 #include "MediaDetector.h"
 #include "PresenceManager.h"
+#include "CreativeDetector.h"
+#include "CreativePresenceManager.h"
+#include "ProductiveDetector.h"
+#include "ProductivePresenceManager.h"
 
 #include <deque>
 
 namespace winrt::Last_Rich_Presence::implementation
 {
+    enum class CreativePriorityMode
+    {
+        Auto = 0,
+        PreferMedia = 1,
+        PreferCreative = 2
+    };
+
+    enum class CreativePrivacyMode
+    {
+        Normal = 0,
+        AppOnly = 1,
+        Private = 2
+    };
+
+    enum class CreativeIdleBehavior
+    {
+        HoldLast5Seconds = 0,
+        ClearImmediately = 1
+    };
+
+    enum class AppThemeMode
+    {
+        FollowSystem = 0,
+        Light = 1,
+        Dark = 2
+    };
+
     struct MainWindow : MainWindowT<MainWindow>
     {
         MainWindow() = default;
@@ -44,6 +75,30 @@ namespace winrt::Last_Rich_Presence::implementation
                                            winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
         void OnSuppressBrowserArtToggled(winrt::Windows::Foundation::IInspectable const& sender,
                                          winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
+        void OnThemeSelectionChanged(winrt::Windows::Foundation::IInspectable const& sender,
+                                     winrt::Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const& e);
+        void OnActivityTypeSelectionChanged(winrt::Windows::Foundation::IInspectable const& sender,
+                                            winrt::Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const& e);
+        void OnProductiveToggleChanged(winrt::Windows::Foundation::IInspectable const& sender,
+                                       winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
+        void OnProductiveSelectionChanged(winrt::Windows::Foundation::IInspectable const& sender,
+                                          winrt::Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const& e);
+        void OnProductiveAppFilterToggled(winrt::Windows::Foundation::IInspectable const& sender,
+                                          winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
+        void OnProductiveSelectAllAppsClicked(winrt::Windows::Foundation::IInspectable const& sender,
+                                              winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
+        void OnProductiveDeselectAllAppsClicked(winrt::Windows::Foundation::IInspectable const& sender,
+                                                winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
+        void OnCreativeToggleChanged(winrt::Windows::Foundation::IInspectable const& sender,
+                                     winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
+        void OnCreativeSelectionChanged(winrt::Windows::Foundation::IInspectable const& sender,
+                                        winrt::Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const& e);
+        void OnCreativeAppFilterToggled(winrt::Windows::Foundation::IInspectable const& sender,
+                                        winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
+        void OnCreativeSelectAllAppsClicked(winrt::Windows::Foundation::IInspectable const& sender,
+                                            winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
+        void OnCreativeDeselectAllAppsClicked(winrt::Windows::Foundation::IInspectable const& sender,
+                                              winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
         void OnClearDiagnosticsClicked(winrt::Windows::Foundation::IInspectable const& sender,
                                        winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
         void OnExportDiagnosticsJsonClicked(winrt::Windows::Foundation::IInspectable const& sender,
@@ -70,7 +125,27 @@ namespace winrt::Last_Rich_Presence::implementation
         bool TryHandleTrayWindowMessage(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result);
         static LRESULT CALLBACK TrayWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
         void OnMediaChanged(const MediaInfo& info);
+        void OnProductiveActivityChanged(const ProductiveActivityInfo& info);
+        void OnCreativeActivityChanged(const CreativeActivityInfo& info);
         void UpdateUI(const MediaInfo& info);
+        void UpdateProductivePreview(const ProductiveActivityInfo& info);
+        void UpdateCreativePreview(const CreativeActivityInfo& info);
+        void ApplyProductiveRuntimeState();
+        void SyncProductiveRpcOutput();
+        void UpdateHomeProductivePreview();
+        void UpdateHomeCreativePreview();
+        void SyncProductiveSettingsFromControls();
+        void SyncCreativeSettingsFromControls();
+        void SyncActivityTypeOverridesFromControls();
+        void ApplyActivityTypeOverrides();
+        void SetAllProductiveAppFilterChecks(bool enabled);
+        void SetAllCreativeAppFilterChecks(bool enabled);
+        void ApplyCreativeDetectorRuntimeState();
+        void RefreshCreativePreviewFromCurrentState();
+        bool IsProductiveAppEnabled(const ProductiveActivityInfo& info) const;
+        bool IsCreativeAppEnabled(const CreativeActivityInfo& info) const;
+        bool TryGetEffectiveCreativeActivityForRpc(CreativeActivityInfo& infoOut, bool& heldOut) const;
+        void SyncCreativeRpcOutput();
         void StartProgressTimer();
         void StopProgressTimer();
         bool IsMotionEnabled() const;
@@ -85,6 +160,7 @@ namespace winrt::Last_Rich_Presence::implementation
         void SetLivePulseActive(bool active);
         void ShowTrackTransitionSkeleton();
         void HideTrackTransitionSkeleton();
+        void ApplyThemeMode();
         void UpdateSourceBadge(const MediaInfo& info);
         std::wstring FormatSourceDebugText(const MediaInfo& info) const;
         void AppendDiagnosticLog(const std::wstring& level, const std::wstring& component, const std::wstring& message);
@@ -92,6 +168,8 @@ namespace winrt::Last_Rich_Presence::implementation
         std::wstring BuildDiagnosticsSnapshotJson() const;
         std::wstring BuildSettingsSnapshotJson();
         void UpdateThumbnail(const MediaInfo& info);
+        void UpdateProductiveAppIcon(const ProductiveActivityInfo& info);
+        void UpdateCreativeAppIcon(const CreativeActivityInfo& info);
         void ShowConnectionInfoBar(bool connected);
         void LoadSettings();
         void SaveSettings();
@@ -99,8 +177,14 @@ namespace winrt::Last_Rich_Presence::implementation
 
         std::shared_ptr<MediaDetector> m_mediaDetector;
         std::shared_ptr<PresenceManager> m_presence;
+        std::shared_ptr<ProductiveDetector> m_productiveDetector;
+        std::shared_ptr<ProductivePresenceManager> m_productivePresence;
+        std::shared_ptr<CreativeDetector> m_creativeDetector;
+        std::shared_ptr<CreativePresenceManager> m_creativePresence;
         std::shared_ptr<std::atomic<bool>> m_lifetimeToken;
         MediaInfo m_lastMedia;
+        ProductiveActivityInfo m_lastProductiveActivity;
+        CreativeActivityInfo m_lastCreativeActivity;
         Microsoft::UI::Xaml::DispatcherTimer m_progressTimer{nullptr};
         Microsoft::UI::Xaml::DispatcherTimer m_connectionInfoBarTimer{nullptr};
         Microsoft::UI::Xaml::DispatcherTimer m_trackSkeletonTimer{nullptr};
@@ -114,6 +198,12 @@ namespace winrt::Last_Rich_Presence::implementation
         Microsoft::UI::Xaml::Media::Animation::Storyboard m_trackSkeletonStoryboard{nullptr};
         Microsoft::UI::Dispatching::DispatcherQueue m_dispatcherQueue{nullptr};
         winrt::Windows::Foundation::IAsyncAction m_thumbnailUpdateTask{ nullptr };
+        winrt::Windows::Foundation::IAsyncAction m_productiveIconUpdateTask{ nullptr };
+        winrt::Windows::Foundation::IAsyncAction m_creativeIconUpdateTask{ nullptr };
+        std::wstring m_lastProductiveIconCacheKey;
+        uint64_t m_productiveIconRequestId{0};
+        std::wstring m_lastCreativeIconCacheKey;
+        uint64_t m_creativeIconRequestId{0};
         bool m_enabled{true};
         bool m_wasConnected{false};
         bool m_isInitializing{true};
@@ -130,8 +220,52 @@ namespace winrt::Last_Rich_Presence::implementation
         bool m_sensitiveKeywordFilter{true};
         bool m_strictBrowserPrivacy{false};
         bool m_suppressBrowserAlbumArt{false};
+        int m_mediaActivityTypeOverride{-1};
+        int m_productiveActivityTypeOverride{-1};
+        int m_creativeActivityTypeOverride{-1};
+        AppThemeMode m_themeMode{AppThemeMode::FollowSystem};
+        bool m_productivePresenceRunning{false};
+        bool m_productiveEnabled{true};
+        ProductiveDetectionMode m_productiveDetectionMode{ProductiveDetectionMode::ForegroundPreferredVisibleFallback};
+        bool m_productiveWordEnabled{true};
+        bool m_productiveExcelEnabled{true};
+        bool m_productivePowerPointEnabled{true};
+        bool m_productiveOneNoteEnabled{true};
+        bool m_productiveAccessEnabled{true};
+        bool m_productivePublisherEnabled{true};
+        bool m_productiveVisioEnabled{true};
+        bool m_productiveProjectEnabled{true};
+        bool m_creativePresenceRunning{false};
+        bool m_creativeEnabled{true};
+        CreativePriorityMode m_creativePriority{CreativePriorityMode::Auto};
+        CreativeDetectionMode m_creativeDetectionMode{CreativeDetectionMode::ForegroundPreferredVisibleFallback};
+        bool m_creativeShowProjectName{true};
+        bool m_creativeShowWindowTitle{false};
+        bool m_creativePhotoshopEnabled{true};
+        bool m_creativeIllustratorEnabled{true};
+        bool m_creativePremiereEnabled{true};
+        bool m_creativeAfterEffectsEnabled{true};
+        bool m_creativeInDesignEnabled{true};
+        bool m_creativeAuditionEnabled{true};
+        bool m_creativeMediaEncoderEnabled{true};
+        bool m_creativeLightroomEnabled{true};
+        bool m_creativeLightroomClassicEnabled{true};
+        bool m_creativeInCopyEnabled{true};
+        bool m_creativeDreamweaverEnabled{true};
+        bool m_creativeAnimateEnabled{true};
+        bool m_creativeXdEnabled{true};
+        bool m_creativeBridgeEnabled{true};
+        bool m_creativeCharacterAnimatorEnabled{true};
+        bool m_creativeFrescoEnabled{true};
+        bool m_creativeDimensionEnabled{true};
+        bool m_creativeSubstanceEnabled{true};
+        bool m_creativeAcrobatEnabled{true};
+        bool m_creativeOtherAdobeEnabled{true};
+        CreativePrivacyMode m_creativePrivacyMode{CreativePrivacyMode::Normal};
+        CreativeIdleBehavior m_creativeIdleBehavior{CreativeIdleBehavior::HoldLast5Seconds};
         std::wstring m_blockedAppSiteTermsRaw;
         std::chrono::steady_clock::time_point m_lastTrayToggleAt{};
+        std::chrono::steady_clock::time_point m_lastCreativeActiveSeenAt{};
         HWND m_windowHandle{ nullptr };
         WNDPROC m_originalWndProc{ nullptr };
         HICON m_trayIconHandle{ nullptr };
@@ -140,6 +274,9 @@ namespace winrt::Last_Rich_Presence::implementation
         std::wstring m_lastUiTrackKey;
         std::wstring m_lastUiSourceKey;
         std::wstring m_activePageTag{L"Home"};
+        std::wstring m_queuedPageTag;
+        bool m_pageTransitionInProgress{false};
+        CreativeActivityInfo m_lastCreativeAcceptedActivity;
         std::chrono::steady_clock::time_point m_lastPresencePushAt{};
         bool m_lastPresencePushPlaying{false};
         bool m_reduceMotionRequested{false};

@@ -19,12 +19,14 @@ struct DiscordPresenceData
     int64_t endTimestamp = 0;
     int activityType = 0;       // 0=Playing, 2=Listening, 3=Watching
     bool playing = false;
+    uint32_t targetPid = 0;     // Optional: publish activity for this process PID
 };
 
 class DiscordRPC
 {
 public:
     DiscordRPC();
+    explicit DiscordRPC(std::string appId);
     ~DiscordRPC();
 
     void Initialize();
@@ -52,6 +54,7 @@ private:
     bool m_presenceDirty{false};
     bool m_clearRequested{false};
     bool m_lastPresenceHadTimestamps{false};
+    uint32_t m_lastActivityPid{0};
     std::atomic<bool> m_hasPresenceSnapshot{false};
     std::atomic<int> m_nonce{0};
 

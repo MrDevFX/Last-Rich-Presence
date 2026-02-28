@@ -33,6 +33,12 @@
     <ClCompile Include="src\core\pch.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
+    <ClCompile Include="src\core\CreativeDetector.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\CreativePresenceManager.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
     <ClCompile Include="src\core\MediaDetector.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
@@ -46,9 +52,16 @@
     <ClCompile Include="src\ui\MainWindow.xaml.cpp">
       <Filter>src\ui</Filter>
     </ClCompile>
+    <ClCompile Include="src\core\PresenceManager.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\core\pch.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\CreativeDetector.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\CreativePresenceManager.h">
       <Filter>src\core</Filter>
     </ClInclude>
     <ClInclude Include="src\core\MediaDetector.h">
@@ -63,6 +76,7 @@
     <ClInclude Include="src\ui\MainWindow.xaml.h">
       <Filter>src\ui</Filter>
     </ClInclude>
+    <ClInclude Include="src\core\PresenceManager.h" />
   </ItemGroup>
   <ItemGroup>
     <Image Include="Assets\Wide310x150Logo.scale-200.png">
@@ -86,6 +100,7 @@
     <Image Include="Assets\LockScreenLogo.scale-200.png">
       <Filter>Assets</Filter>
     </Image>
+    <Image Include="Assets\logo.ico" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="readme.txt" />
@@ -98,5 +113,10 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
+    <None Include="Last Rich Presence_TemporaryKey.pfx" />
+  </ItemGroup>
+  <ItemGroup>
+    <Natvis Include="$(MSBuildThisFileDirectory)..\..\natvis\wil.natvis" />
+    <Natvis Include="$(MSBuildThisFileDirectory)..\..\natvis\wil.natstepfilter" />
   </ItemGroup>
 </Project>

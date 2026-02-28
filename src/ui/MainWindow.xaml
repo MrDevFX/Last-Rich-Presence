@@ -22,7 +22,7 @@
                         <Border Padding="8,2" CornerRadius="999"
                                 VerticalAlignment="Center"
                                 Background="{ThemeResource SubtleFillColorSecondaryBrush}">
-                            <TextBlock Text="v1.0.0"
+                            <TextBlock Text="v2.0.0"
                                        Style="{StaticResource CaptionTextBlockStyle}"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                         </Border>
@@ -72,14 +72,14 @@
                         <FontIcon Glyph="&#xE8D6;" FontSize="17"/>
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem x:Name="ProductivityNavItem" Content="Productivity" Tag="Productivity" ToolTipService.ToolTip="Focus and productivity activity">
+                <NavigationViewItem x:Name="CreativeNavItem" Content="Creativity" Tag="Creative" ToolTipService.ToolTip="Creativity and design activity">
                     <NavigationViewItem.Icon>
-                        <FontIcon Glyph="&#xE7C3;" FontSize="17"/>
+                        <SymbolIcon Symbol="Edit"/>
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem x:Name="CreativeNavItem" Content="Creative" Tag="Creative" ToolTipService.ToolTip="Creative and design activity">
+                <NavigationViewItem x:Name="ProductivityNavItem" Content="Productivity" Tag="Productivity" ToolTipService.ToolTip="Focus and productivity activity">
                     <NavigationViewItem.Icon>
-                        <FontIcon Glyph="&#xE160;" FontSize="17"/>
+                        <SymbolIcon Symbol="Bullets"/>
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
             </NavigationView.MenuItems>
@@ -100,13 +100,19 @@
                     </TransitionCollection>
                 </Grid.Transitions>
                 <!-- ============ HOME PAGE ============ -->
-                <StackPanel x:Name="HomePage" Visibility="Visible">
-                    <StackPanel.ChildrenTransitions>
-                        <TransitionCollection>
-                            <EntranceThemeTransition FromVerticalOffset="28" IsStaggeringEnabled="True"/>
-                            <RepositionThemeTransition/>
-                        </TransitionCollection>
-                    </StackPanel.ChildrenTransitions>
+                <ScrollViewer x:Name="HomePage"
+                              Visibility="Visible"
+                              VerticalScrollMode="Enabled"
+                              VerticalScrollBarVisibility="Hidden"
+                              HorizontalScrollMode="Disabled"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel>
+                        <StackPanel.ChildrenTransitions>
+                            <TransitionCollection>
+                                <EntranceThemeTransition FromVerticalOffset="28" IsStaggeringEnabled="True"/>
+                                <RepositionThemeTransition/>
+                            </TransitionCollection>
+                        </StackPanel.ChildrenTransitions>
 
                     <!-- Connection Status Card -->
                     <Border Style="{StaticResource SettingsCardStyle}" Margin="0,0,0,16" Padding="16">
@@ -206,7 +212,7 @@
                         <!-- Current Source Card -->
                         <Border x:Name="HomeSourceCard" Style="{StaticResource SettingsCardStyle}" Padding="16">
                             <StackPanel>
-                                 <TextBlock Text="CURRENT SOURCE" Style="{StaticResource SectionOverlineTextStyle}" Margin="0,0,0,10"/>
+                                 <TextBlock Text="MEDIA SOURCE" Style="{StaticResource SectionOverlineTextStyle}" Margin="0,0,0,10"/>
                                 <TextBlock x:Name="HomeSourceValue" Text="No active source"
                                             Margin="0,0,0,0"
                                             Style="{StaticResource CardTitleTextStyle}"
@@ -265,7 +271,7 @@
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
 
-                                    <TextBlock Text="CURRENT ACTIVITY"
+                                    <TextBlock Text="CURRENT MEDIA ACTIVITY"
                                                Style="{StaticResource SectionOverlineTextStyle}"/>
 
                                     <Border Grid.Column="1"
@@ -403,7 +409,7 @@
                                           StrokeStartLineCap="Round"
                                           StrokeEndLineCap="Round"
                                           VerticalAlignment="Center"
-                                          Data="M0,4 C4,1.6 8,6.4 12,4 C16,1.6 20,6.4 24,4 C28,1.6 32,6.4 36,4 C40,1.6 44,6.4 48,4 C52,1.6 56,6.4 60,4 C64,1.6 68,6.4 72,4 C76,1.6 80,6.4 84,4 C88,1.6 92,6.4 96,4 C100,1.6 104,6.4 108,4 C112,1.6 116,6.4 120,4"/>
+                                          Data="M0,4 C2.5,1.6 5,6.4 7.5,4 C10,1.6 12.5,6.4 15,4 C17.5,1.6 20,6.4 22.5,4 C25,1.6 27.5,6.4 30,4 C32.5,1.6 35,6.4 37.5,4 C40,1.6 42.5,6.4 45,4 C47.5,1.6 50,6.4 52.5,4 C55,1.6 57.5,6.4 60,4 C62.5,1.6 65,6.4 67.5,4 C70,1.6 72.5,6.4 75,4 C77.5,1.6 80,6.4 82.5,4 C85,1.6 87.5,6.4 90,4 C92.5,1.6 95,6.4 97.5,4 C100,1.6 102.5,6.4 105,4 C107.5,1.6 110,6.4 112.5,4 C115,1.6 117.5,6.4 120,4"/>
 
                                     <Grid>
                                         <Grid.Clip>
@@ -417,7 +423,7 @@
                                               StrokeEndLineCap="Round"
                                               Opacity="0.95"
                                               VerticalAlignment="Center"
-                                              Data="M0,4 C4,1.6 8,6.4 12,4 C16,1.6 20,6.4 24,4 C28,1.6 32,6.4 36,4 C40,1.6 44,6.4 48,4 C52,1.6 56,6.4 60,4 C64,1.6 68,6.4 72,4 C76,1.6 80,6.4 84,4 C88,1.6 92,6.4 96,4 C100,1.6 104,6.4 108,4 C112,1.6 116,6.4 120,4">
+                                              Data="M0,4 C2.5,1.6 5,6.4 7.5,4 C10,1.6 12.5,6.4 15,4 C17.5,1.6 20,6.4 22.5,4 C25,1.6 27.5,6.4 30,4 C32.5,1.6 35,6.4 37.5,4 C40,1.6 42.5,6.4 45,4 C47.5,1.6 50,6.4 52.5,4 C55,1.6 57.5,6.4 60,4 C62.5,1.6 65,6.4 67.5,4 C70,1.6 72.5,6.4 75,4 C77.5,1.6 80,6.4 82.5,4 C85,1.6 87.5,6.4 90,4 C92.5,1.6 95,6.4 97.5,4 C100,1.6 102.5,6.4 105,4 C107.5,1.6 110,6.4 112.5,4 C115,1.6 117.5,6.4 120,4">
                                             <Path.RenderTransform>
                                                 <TranslateTransform x:Name="HomeMiniWaveFillTransform"/>
                                             </Path.RenderTransform>
@@ -437,13 +443,500 @@
                         </Border>
                     </Grid>
 
-                    <TextBlock Text="Last Rich Presence v1.0"
-                               Style="{StaticResource SubtleCaptionTextStyle}"
-                               HorizontalAlignment="Center" Margin="0,12,0,0"/>
-                </StackPanel>
+                    <Grid x:Name="HomeCreativeGrid" Margin="0,0,0,16" ColumnSpacing="16" RowSpacing="0">
+                        <Grid.Transitions>
+                            <TransitionCollection>
+                                <RepositionThemeTransition/>
+                            </TransitionCollection>
+                        </Grid.Transitions>
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup>
+                                <VisualState x:Name="HomeCreativeNarrow">
+                                    <VisualState.StateTriggers>
+                                        <AdaptiveTrigger MinWindowWidth="0"/>
+                                    </VisualState.StateTriggers>
+                                    <VisualState.Setters>
+                                        <Setter Target="HomeCreativeGrid.ColumnSpacing" Value="0"/>
+                                        <Setter Target="HomeCreativeGrid.RowSpacing" Value="16"/>
+                                        <Setter Target="HomeCreativeSourceCard.(Grid.Column)" Value="0"/>
+                                        <Setter Target="HomeCreativeSourceCard.(Grid.Row)" Value="0"/>
+                                        <Setter Target="HomeCreativeSourceCard.(Grid.ColumnSpan)" Value="2"/>
+                                        <Setter Target="HomeCreativeCard.(Grid.Column)" Value="0"/>
+                                        <Setter Target="HomeCreativeCard.(Grid.Row)" Value="1"/>
+                                        <Setter Target="HomeCreativeCard.(Grid.ColumnSpan)" Value="2"/>
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="HomeCreativeWide">
+                                    <VisualState.StateTriggers>
+                                        <AdaptiveTrigger MinWindowWidth="980"/>
+                                    </VisualState.StateTriggers>
+                                    <VisualState.Setters>
+                                        <Setter Target="HomeCreativeGrid.ColumnSpacing" Value="16"/>
+                                        <Setter Target="HomeCreativeGrid.RowSpacing" Value="0"/>
+                                        <Setter Target="HomeCreativeSourceCard.(Grid.Column)" Value="0"/>
+                                        <Setter Target="HomeCreativeSourceCard.(Grid.Row)" Value="0"/>
+                                        <Setter Target="HomeCreativeSourceCard.(Grid.ColumnSpan)" Value="1"/>
+                                        <Setter Target="HomeCreativeCard.(Grid.Column)" Value="1"/>
+                                        <Setter Target="HomeCreativeCard.(Grid.Row)" Value="0"/>
+                                        <Setter Target="HomeCreativeCard.(Grid.ColumnSpan)" Value="1"/>
+                                    </VisualState.Setters>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="2*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Border x:Name="HomeCreativeSourceCard" Style="{StaticResource SettingsCardStyle}" Padding="16">
+                            <StackPanel>
+                                <TextBlock Text="CREATIVITY SOURCE" Style="{StaticResource SectionOverlineTextStyle}" Margin="0,0,0,10"/>
+                                <TextBlock x:Name="HomeCreativeSourceValue"
+                                           Text="No active creativity source"
+                                           Style="{StaticResource CardTitleTextStyle}"
+                                           TextTrimming="CharacterEllipsis"
+                                           MaxLines="1"/>
+                                <TextBlock x:Name="HomeCreativeSourceSubtext"
+                                           Text="Waiting for supported apps..."
+                                           Margin="0,4,0,0"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           TextTrimming="CharacterEllipsis"
+                                           MaxLines="1"/>
+                                <TextBlock x:Name="HomeCreativeDetectedViaText"
+                                           Text="Detected via --"
+                                           Margin="0,2,0,0"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                           TextTrimming="CharacterEllipsis"
+                                           MaxLines="1"/>
+
+                                <Border Margin="0,12,0,0"
+                                        Padding="14,10"
+                                        Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                        BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="10">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Ellipse x:Name="HomeCreativeDetectorIndicator"
+                                                 Width="8"
+                                                 Height="8"
+                                                 Margin="0,0,8,0"
+                                                 Fill="{StaticResource StatusDisconnectedBrush}"
+                                                 VerticalAlignment="Center"/>
+                                        <StackPanel Grid.Column="1">
+                                            <TextBlock x:Name="HomeCreativeDetectorText"
+                                                       Text="Creativity detector"
+                                                       Style="{StaticResource BodyTextBlockStyle}"
+                                                       FontWeight="SemiBold"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       MaxLines="1"/>
+                                            <TextBlock x:Name="HomeCreativeDetectorSubtext"
+                                                       Text="Waiting for supported apps..."
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       MaxLines="2"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
+                        </Border>
+
+                        <Border x:Name="HomeCreativeCard"
+                                Grid.Column="1"
+                                Style="{StaticResource SettingsCardStyle}"
+                                Padding="18">
+                            <StackPanel Spacing="12">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <TextBlock Text="CURRENT CREATIVITY ACTIVITY"
+                                               Style="{StaticResource SectionOverlineTextStyle}"/>
+
+                                    <Border x:Name="HomeCreativeStatusChip"
+                                            Grid.Column="1"
+                                            Padding="10,4"
+                                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="999">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <FontIcon x:Name="HomeCreativeStatusIcon"
+                                                      Glyph="&#xE160;"
+                                                      FontSize="12"
+                                                      VerticalAlignment="Center"
+                                                      Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                                            <TextBlock x:Name="HomeCreativeStatusText"
+                                                       Text="Idle"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <Border Width="54"
+                                            Height="54"
+                                            Margin="0,0,12,0"
+                                            CornerRadius="10"
+                                            Background="{ThemeResource LayerFillColorDefaultBrush}"
+                                            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                            BorderThickness="1"
+                                            VerticalAlignment="Center">
+                                        <Grid>
+                                            <Rectangle Margin="5"
+                                                       RadiusX="7"
+                                                       RadiusY="7"
+                                                       Stroke="{ThemeResource TextFillColorDisabledBrush}"
+                                                       StrokeThickness="1.2"
+                                                       StrokeDashArray="2,2"
+                                                       Fill="Transparent"
+                                                       IsHitTestVisible="False"/>
+                                            <Image x:Name="HomeCreativeAppIcon"
+                                                   Visibility="Collapsed"
+                                                   Stretch="UniformToFill">
+                                                <Image.Clip>
+                                                    <RectangleGeometry Rect="0,0,54,54"/>
+                                                </Image.Clip>
+                                            </Image>
+                                            <SymbolIcon x:Name="HomeCreativeAppIconFallback"
+                                                        Symbol="Edit"
+                                                        HorizontalAlignment="Center"
+                                                        VerticalAlignment="Center"
+                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                        </Grid>
+                                    </Border>
+
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="3">
+                                        <TextBlock x:Name="HomeCreativeTitle"
+                                                   Text="Awaiting Creative Activity"
+                                                   Style="{StaticResource CardTitleTextStyle}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   MaxLines="1"/>
+                                        <TextBlock x:Name="HomeCreativeSubtitle"
+                                                   Text="Launch a supported app to update your status."
+                                                   Style="{StaticResource SecondaryBodyTextStyle}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   MaxLines="2"/>
+                                    </StackPanel>
+                                </Grid>
+
+                                <Grid ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <Border Grid.Column="0"
+                                            Padding="10,8"
+                                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="10">
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Window"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                            <TextBlock x:Name="HomeCreativeWindowText"
+                                                       Text="None"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       TextWrapping="WrapWholeWords"
+                                                       MaxLines="2"/>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Grid.Column="1"
+                                            Padding="10,8"
+                                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="10">
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Process"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                            <TextBlock x:Name="HomeCreativeProcessText"
+                                                       Text="None"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       TextWrapping="WrapWholeWords"
+                                                       MaxLines="2"/>
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <Grid x:Name="HomeProductiveGrid" Margin="0,0,0,16" ColumnSpacing="16" RowSpacing="0">
+                        <Grid.Transitions>
+                            <TransitionCollection>
+                                <RepositionThemeTransition/>
+                            </TransitionCollection>
+                        </Grid.Transitions>
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup>
+                                <VisualState x:Name="HomeProductiveNarrow">
+                                    <VisualState.StateTriggers>
+                                        <AdaptiveTrigger MinWindowWidth="0"/>
+                                    </VisualState.StateTriggers>
+                                    <VisualState.Setters>
+                                        <Setter Target="HomeProductiveGrid.ColumnSpacing" Value="0"/>
+                                        <Setter Target="HomeProductiveGrid.RowSpacing" Value="16"/>
+                                        <Setter Target="HomeProductiveSourceCard.(Grid.Column)" Value="0"/>
+                                        <Setter Target="HomeProductiveSourceCard.(Grid.Row)" Value="0"/>
+                                        <Setter Target="HomeProductiveSourceCard.(Grid.ColumnSpan)" Value="2"/>
+                                        <Setter Target="HomeProductiveCard.(Grid.Column)" Value="0"/>
+                                        <Setter Target="HomeProductiveCard.(Grid.Row)" Value="1"/>
+                                        <Setter Target="HomeProductiveCard.(Grid.ColumnSpan)" Value="2"/>
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="HomeProductiveWide">
+                                    <VisualState.StateTriggers>
+                                        <AdaptiveTrigger MinWindowWidth="980"/>
+                                    </VisualState.StateTriggers>
+                                    <VisualState.Setters>
+                                        <Setter Target="HomeProductiveGrid.ColumnSpacing" Value="16"/>
+                                        <Setter Target="HomeProductiveGrid.RowSpacing" Value="0"/>
+                                        <Setter Target="HomeProductiveSourceCard.(Grid.Column)" Value="0"/>
+                                        <Setter Target="HomeProductiveSourceCard.(Grid.Row)" Value="0"/>
+                                        <Setter Target="HomeProductiveSourceCard.(Grid.ColumnSpan)" Value="1"/>
+                                        <Setter Target="HomeProductiveCard.(Grid.Column)" Value="1"/>
+                                        <Setter Target="HomeProductiveCard.(Grid.Row)" Value="0"/>
+                                        <Setter Target="HomeProductiveCard.(Grid.ColumnSpan)" Value="1"/>
+                                    </VisualState.Setters>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="2*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Border x:Name="HomeProductiveSourceCard" Style="{StaticResource SettingsCardStyle}" Padding="16">
+                            <StackPanel>
+                                <TextBlock Text="PRODUCTIVITY SOURCE" Style="{StaticResource SectionOverlineTextStyle}" Margin="0,0,0,10"/>
+                                <TextBlock x:Name="HomeProductiveSourceValue"
+                                           Text="No active productivity source"
+                                           Style="{StaticResource CardTitleTextStyle}"
+                                           TextTrimming="CharacterEllipsis"
+                                           MaxLines="1"/>
+                                <TextBlock x:Name="HomeProductiveSourceSubtext"
+                                           Text="Waiting for supported apps..."
+                                           Margin="0,4,0,0"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           TextTrimming="CharacterEllipsis"
+                                           MaxLines="1"/>
+                                <TextBlock x:Name="HomeProductiveDetectedViaText"
+                                           Text="Detected via --"
+                                           Margin="0,2,0,0"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                           TextTrimming="CharacterEllipsis"
+                                           MaxLines="1"/>
+
+                                <Border Margin="0,12,0,0"
+                                        Padding="14,10"
+                                        Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                        BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="10">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Ellipse x:Name="HomeProductiveDetectorIndicator"
+                                                 Width="8"
+                                                 Height="8"
+                                                 Margin="0,0,8,0"
+                                                 Fill="{StaticResource StatusDisconnectedBrush}"
+                                                 VerticalAlignment="Center"/>
+                                        <StackPanel Grid.Column="1">
+                                            <TextBlock x:Name="HomeProductiveDetectorText"
+                                                       Text="Productivity detector"
+                                                       Style="{StaticResource BodyTextBlockStyle}"
+                                                       FontWeight="SemiBold"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       MaxLines="1"/>
+                                            <TextBlock x:Name="HomeProductiveDetectorSubtext"
+                                                       Text="Waiting for supported apps..."
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       MaxLines="2"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
+                        </Border>
+
+                        <Border x:Name="HomeProductiveCard"
+                                Grid.Column="1"
+                                Style="{StaticResource SettingsCardStyle}"
+                                Padding="18">
+                            <StackPanel Spacing="12">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <TextBlock Text="CURRENT PRODUCTIVITY ACTIVITY"
+                                               Style="{StaticResource SectionOverlineTextStyle}"/>
+
+                                    <Border x:Name="HomeProductiveStatusChip"
+                                            Grid.Column="1"
+                                            Padding="10,4"
+                                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="999">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <FontIcon x:Name="HomeProductiveStatusIcon"
+                                                      Glyph="&#xE160;"
+                                                      FontSize="12"
+                                                      VerticalAlignment="Center"
+                                                      Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                                            <TextBlock x:Name="HomeProductiveStatusText"
+                                                       Text="Idle"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <Border Width="54"
+                                            Height="54"
+                                            Margin="0,0,12,0"
+                                            CornerRadius="10"
+                                            Background="{ThemeResource LayerFillColorDefaultBrush}"
+                                            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                            BorderThickness="1"
+                                            VerticalAlignment="Center">
+                                        <Grid>
+                                            <Rectangle Margin="5"
+                                                       RadiusX="7"
+                                                       RadiusY="7"
+                                                       Stroke="{ThemeResource TextFillColorDisabledBrush}"
+                                                       StrokeThickness="1.2"
+                                                       StrokeDashArray="2,2"
+                                                       Fill="Transparent"
+                                                       IsHitTestVisible="False"/>
+                                            <Image x:Name="HomeProductiveAppIcon"
+                                                   Visibility="Collapsed"
+                                                   Stretch="UniformToFill">
+                                                <Image.Clip>
+                                                    <RectangleGeometry Rect="0,0,54,54"/>
+                                                </Image.Clip>
+                                            </Image>
+                                            <SymbolIcon x:Name="HomeProductiveAppIconFallback"
+                                                        Symbol="Document"
+                                                        HorizontalAlignment="Center"
+                                                        VerticalAlignment="Center"
+                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                        </Grid>
+                                    </Border>
+
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="3">
+                                        <TextBlock x:Name="HomeProductiveTitle"
+                                                   Text="Awaiting Productive Activity"
+                                                   Style="{StaticResource CardTitleTextStyle}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   MaxLines="1"/>
+                                        <TextBlock x:Name="HomeProductiveSubtitle"
+                                                   Text="Launch a supported Office app to update your status."
+                                                   Style="{StaticResource SecondaryBodyTextStyle}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   MaxLines="2"/>
+                                    </StackPanel>
+                                </Grid>
+
+                                <Grid ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <Border Grid.Column="0"
+                                            Padding="10,8"
+                                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="10">
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Window"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                            <TextBlock x:Name="HomeProductiveWindowText"
+                                                       Text="None"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       TextWrapping="WrapWholeWords"
+                                                       MaxLines="2"/>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Grid.Column="1"
+                                            Padding="10,8"
+                                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="10">
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Process"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                            <TextBlock x:Name="HomeProductiveProcessText"
+                                                       Text="None"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       TextWrapping="WrapWholeWords"
+                                                       MaxLines="2"/>
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    </StackPanel>
+                </ScrollViewer>
 
                 <!-- ============ MUSIC PAGE ============ -->
-                <ScrollViewer x:Name="MusicPage" Visibility="Collapsed">
+                <ScrollViewer x:Name="MusicPage"
+                              Visibility="Collapsed"
+                              VerticalScrollMode="Enabled"
+                              VerticalScrollBarVisibility="Hidden"
+                              HorizontalScrollMode="Disabled"
+                              HorizontalScrollBarVisibility="Disabled">
                     <StackPanel>
                         <StackPanel.ChildrenTransitions>
                             <TransitionCollection>
@@ -554,7 +1047,7 @@
                                                   StrokeStartLineCap="Round"
                                                   StrokeEndLineCap="Round"
                                                   VerticalAlignment="Center"
-                                                  Data="M0,6 C4,2 8,10 12,6 C16,2 20,10 24,6 C28,2 32,10 36,6 C40,2 44,10 48,6 C52,2 56,10 60,6 C64,2 68,10 72,6 C76,2 80,10 84,6 C88,2 92,10 96,6 C100,2 104,10 108,6 C112,2 116,10 120,6"/>
+                                                  Data="M0,6 C2.5,2 5,10 7.5,6 C10,2 12.5,10 15,6 C17.5,2 20,10 22.5,6 C25,2 27.5,10 30,6 C32.5,2 35,10 37.5,6 C40,2 42.5,10 45,6 C47.5,2 50,10 52.5,6 C55,2 57.5,10 60,6 C62.5,2 65,10 67.5,6 C70,2 72.5,10 75,6 C77.5,2 80,10 82.5,6 C85,2 87.5,10 90,6 C92.5,2 95,10 97.5,6 C100,2 102.5,10 105,6 C107.5,2 110,10 112.5,6 C115,2 117.5,10 120,6"/>
 
                                             <Grid>
                                                 <Grid.Clip>
@@ -568,7 +1061,7 @@
                                                       StrokeEndLineCap="Round"
                                                       Opacity="0.95"
                                                       VerticalAlignment="Center"
-                                                      Data="M0,6 C4,2 8,10 12,6 C16,2 20,10 24,6 C28,2 32,10 36,6 C40,2 44,10 48,6 C52,2 56,10 60,6 C64,2 68,10 72,6 C76,2 80,10 84,6 C88,2 92,10 96,6 C100,2 104,10 108,6 C112,2 116,10 120,6">
+                                                      Data="M0,6 C2.5,2 5,10 7.5,6 C10,2 12.5,10 15,6 C17.5,2 20,10 22.5,6 C25,2 27.5,10 30,6 C32.5,2 35,10 37.5,6 C40,2 42.5,10 45,6 C47.5,2 50,10 52.5,6 C55,2 57.5,10 60,6 C62.5,2 65,10 67.5,6 C70,2 72.5,10 75,6 C77.5,2 80,10 82.5,6 C85,2 87.5,10 90,6 C92.5,2 95,10 97.5,6 C100,2 102.5,10 105,6 C107.5,2 110,10 112.5,6 C115,2 117.5,10 120,6">
                                                     <Path.RenderTransform>
                                                         <TranslateTransform x:Name="SongWaveFillTransform"/>
                                                     </Path.RenderTransform>
@@ -726,7 +1219,12 @@
                 </ScrollViewer>
 
                 <!-- ============ PRODUCTIVITY PAGE ============ -->
-                <ScrollViewer x:Name="ProductivityPage" Visibility="Collapsed">
+                <ScrollViewer x:Name="ProductivityPage"
+                              Visibility="Collapsed"
+                              VerticalScrollMode="Enabled"
+                              VerticalScrollBarVisibility="Hidden"
+                              HorizontalScrollMode="Disabled"
+                              HorizontalScrollBarVisibility="Disabled">
                     <StackPanel>
                         <StackPanel.ChildrenTransitions>
                             <TransitionCollection>
@@ -740,10 +1238,132 @@
                                    Margin="0,0,0,12"/>
 
                         <Border Style="{StaticResource SettingsCardStyle}">
-                            <StackPanel Spacing="10">
-                                <TextBlock Text="Productivity RPC (In Progress)"
-                                           Style="{StaticResource BodyStrongTextBlockStyle}"/>
-                                <TextBlock Text="This section will host rich presence support for focus and work apps."
+                            <StackPanel Spacing="12">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="LIVE DETECTOR PREVIEW"
+                                               Style="{StaticResource SectionOverlineTextStyle}"
+                                               Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                                    <Border Grid.Column="1"
+                                            Padding="10,4"
+                                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="999">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <FontIcon Glyph="&#xE7C1;"
+                                                      FontSize="12"
+                                                      VerticalAlignment="Center"
+                                                      Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                                            <TextBlock Text="Native C++"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <Border Width="64"
+                                            Height="64"
+                                            Margin="0,0,12,0"
+                                            CornerRadius="12"
+                                            Background="{ThemeResource LayerFillColorDefaultBrush}"
+                                            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                            BorderThickness="1">
+                                        <Grid>
+                                            <Rectangle Margin="6"
+                                                       RadiusX="8"
+                                                       RadiusY="8"
+                                                       Stroke="{ThemeResource TextFillColorDisabledBrush}"
+                                                       StrokeThickness="1.4"
+                                                       StrokeDashArray="2,2"
+                                                       Fill="Transparent"
+                                                       IsHitTestVisible="False"/>
+                                            <Image x:Name="ProductiveDetectedAppIcon"
+                                                   Visibility="Collapsed"
+                                                   Stretch="UniformToFill">
+                                                <Image.Clip>
+                                                    <RectangleGeometry Rect="0,0,64,64"/>
+                                                </Image.Clip>
+                                            </Image>
+                                            <SymbolIcon x:Name="ProductiveDetectedAppIconFallback"
+                                                        Symbol="Document"
+                                                        HorizontalAlignment="Center"
+                                                        VerticalAlignment="Center"
+                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                        </Grid>
+                                    </Border>
+
+                                    <StackPanel Grid.Column="1"
+                                                VerticalAlignment="Center"
+                                                Spacing="4">
+                                        <TextBlock x:Name="ProductiveDetectedAppText"
+                                                   Text="Awaiting Productive Activity"
+                                                   Style="{StaticResource CardTitleTextStyle}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   MaxLines="1"/>
+                                        <TextBlock x:Name="ProductiveDetectedProjectText"
+                                                   Text="Launch a supported Office app to update your status."
+                                                   Style="{StaticResource SecondaryBodyTextStyle}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                   TextWrapping="WrapWholeWords"
+                                                   MaxLines="2"/>
+                                    </StackPanel>
+                                </Grid>
+
+                                <Grid ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <Border Grid.Column="0"
+                                            Padding="10,8"
+                                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="10">
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Window"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                            <TextBlock x:Name="ProductiveDetectedWindowText"
+                                                       Text="None"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       TextWrapping="WrapWholeWords"
+                                                       MaxLines="2"/>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Grid.Column="1"
+                                            Padding="10,8"
+                                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="10">
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Process"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                            <TextBlock x:Name="ProductiveDetectedProcessText"
+                                                       Text="None"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       TextWrapping="WrapWholeWords"
+                                                       MaxLines="2"/>
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
+
+                                <TextBlock x:Name="ProductiveRuntimeSummaryText"
+                                           Text="Waiting for supported apps..."
                                            Style="{StaticResource CaptionTextBlockStyle}"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                            TextWrapping="Wrap"/>
@@ -751,10 +1371,131 @@
                         </Border>
 
                         <Border Style="{StaticResource SettingsCardStyle}">
+                            <StackPanel Spacing="10">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="Enable Productive RPC" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                                        <TextBlock Text="Turns the Productive detector and Discord pipeline on or off."
+                                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                   TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ToggleSwitch Grid.Column="1" x:Name="ProductiveEnableToggle" IsOn="True"
+                                                  Toggled="OnProductiveToggleChanged"
+                                                  VerticalAlignment="Center"/>
+                                </Grid>
+                                <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+                                <TextBlock Text="Supported apps: Word, Excel, PowerPoint, OneNote, Access, Publisher, Visio, Project."
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </Border>
+
+                        <StackPanel x:Name="ProductiveSettingsControlsPanel" Spacing="12">
+                            <Border Style="{StaticResource SettingsCardStyle}">
+                                <StackPanel Spacing="10">
+                                    <TextBlock Text="Routing &amp; detection"
+                                               Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Text="Detection mode"
+                                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                        <ComboBox x:Name="ProductiveDetectionModeCombo"
+                                                  SelectedIndex="0"
+                                                  SelectionChanged="OnProductiveSelectionChanged">
+                                            <ComboBoxItem Content="Foreground preferred + visible fallback (Recommended)"/>
+                                            <ComboBoxItem Content="Foreground only"/>
+                                            <ComboBoxItem Content="Visible Office window only"/>
+                                        </ComboBox>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource SettingsCardStyle}">
+                                <StackPanel Spacing="10">
+                                    <TextBlock Text="Per-app enable list"
+                                               Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                                    <TextBlock Text="Only enabled apps are allowed into the Productivity pipeline preview."
+                                               Style="{StaticResource CaptionTextBlockStyle}"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               TextWrapping="Wrap"/>
+
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Button Grid.Column="1"
+                                                Content="Select all"
+                                                Click="OnProductiveSelectAllAppsClicked"/>
+                                        <Button Grid.Column="2"
+                                                Content="Deselect all"
+                                                Margin="8,0,0,0"
+                                                Click="OnProductiveDeselectAllAppsClicked"/>
+                                    </Grid>
+
+                                    <Grid ColumnSpacing="20" RowSpacing="6">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+
+                                        <CheckBox Grid.Row="0" Grid.Column="0" x:Name="ProductiveAppWordCheck"
+                                                  Content="Word" IsChecked="True"
+                                                  Checked="OnProductiveAppFilterToggled"
+                                                  Unchecked="OnProductiveAppFilterToggled"/>
+                                        <CheckBox Grid.Row="0" Grid.Column="1" x:Name="ProductiveAppExcelCheck"
+                                                  Content="Excel" IsChecked="True"
+                                                  Checked="OnProductiveAppFilterToggled"
+                                                  Unchecked="OnProductiveAppFilterToggled"/>
+                                        <CheckBox Grid.Row="0" Grid.Column="2" x:Name="ProductiveAppPowerPointCheck"
+                                                  Content="PowerPoint" IsChecked="True"
+                                                  Checked="OnProductiveAppFilterToggled"
+                                                  Unchecked="OnProductiveAppFilterToggled"/>
+
+                                        <CheckBox Grid.Row="1" Grid.Column="0" x:Name="ProductiveAppOneNoteCheck"
+                                                  Content="OneNote" IsChecked="True"
+                                                  Checked="OnProductiveAppFilterToggled"
+                                                  Unchecked="OnProductiveAppFilterToggled"/>
+                                        <CheckBox Grid.Row="1" Grid.Column="1" x:Name="ProductiveAppAccessCheck"
+                                                  Content="Access" IsChecked="True"
+                                                  Checked="OnProductiveAppFilterToggled"
+                                                  Unchecked="OnProductiveAppFilterToggled"/>
+                                        <CheckBox Grid.Row="1" Grid.Column="2" x:Name="ProductiveAppPublisherCheck"
+                                                  Content="Publisher" IsChecked="True"
+                                                  Checked="OnProductiveAppFilterToggled"
+                                                  Unchecked="OnProductiveAppFilterToggled"/>
+
+                                        <CheckBox Grid.Row="2" Grid.Column="0" x:Name="ProductiveAppVisioCheck"
+                                                  Content="Visio" IsChecked="True"
+                                                  Checked="OnProductiveAppFilterToggled"
+                                                  Unchecked="OnProductiveAppFilterToggled"/>
+                                        <CheckBox Grid.Row="2" Grid.Column="1" x:Name="ProductiveAppProjectCheck"
+                                                  Content="Project" IsChecked="True"
+                                                  Checked="OnProductiveAppFilterToggled"
+                                                  Unchecked="OnProductiveAppFilterToggled"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <Border Style="{StaticResource SettingsCardStyle}">
                             <StackPanel Spacing="8">
-                                <TextBlock Text="Planned integrations"
+                                <TextBlock Text="Future planned integration"
                                            Style="{StaticResource BodyStrongTextBlockStyle}"/>
-                                <TextBlock Text="Notion, VS Code, Cursor, Obsidian, Google Docs, and browser-based work tools."
+                                <TextBlock Text="Planned productivity/dev tools: Visual Studio, Visual Studio Code, Qt Creator, and similar desktop apps."
                                            Style="{StaticResource CaptionTextBlockStyle}"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                            TextWrapping="Wrap"/>
@@ -763,8 +1504,13 @@
                     </StackPanel>
                 </ScrollViewer>
 
-                <!-- ============ CREATIVE PAGE ============ -->
-                <ScrollViewer x:Name="CreativePage" Visibility="Collapsed">
+                <!-- ============ CREATIVITY PAGE ============ -->
+                <ScrollViewer x:Name="CreativePage"
+                              Visibility="Collapsed"
+                              VerticalScrollMode="Enabled"
+                              VerticalScrollBarVisibility="Hidden"
+                              HorizontalScrollMode="Disabled"
+                              HorizontalScrollBarVisibility="Disabled">
                     <StackPanel>
                         <StackPanel.ChildrenTransitions>
                             <TransitionCollection>
@@ -773,26 +1519,406 @@
                             </TransitionCollection>
                         </StackPanel.ChildrenTransitions>
 
-                        <TextBlock Text="CREATIVE"
+                        <TextBlock Text="CREATIVITY"
                                    Style="{StaticResource SectionOverlineTextStyle}"
                                    Margin="0,0,0,12"/>
 
-                        <Border Style="{StaticResource SettingsCardStyle}">
-                            <StackPanel Spacing="10">
-                                <TextBlock Text="Creative RPC (In Progress)"
-                                           Style="{StaticResource BodyStrongTextBlockStyle}"/>
-                                <TextBlock Text="This section will host rich presence support for creative and design workflows."
-                                           Style="{StaticResource CaptionTextBlockStyle}"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                           TextWrapping="Wrap"/>
+                        <Border Style="{StaticResource SettingsCardStyle}" Padding="18">
+                            <StackPanel Spacing="12">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="LIVE DETECTOR PREVIEW"
+                                               Style="{StaticResource SectionOverlineTextStyle}"
+                                               Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                                    <Border Grid.Column="1"
+                                            Padding="10,4"
+                                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="999">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <FontIcon Glyph="&#xE7C1;"
+                                                      FontSize="12"
+                                                      VerticalAlignment="Center"
+                                                      Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                                            <TextBlock Text="Native C++"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <Border Width="64"
+                                            Height="64"
+                                            Margin="0,0,12,0"
+                                            CornerRadius="12"
+                                            Background="{ThemeResource LayerFillColorDefaultBrush}"
+                                            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                            BorderThickness="1">
+                                        <Grid>
+                                            <Rectangle Margin="6"
+                                                       RadiusX="8"
+                                                       RadiusY="8"
+                                                       Stroke="{ThemeResource TextFillColorDisabledBrush}"
+                                                       StrokeThickness="1.4"
+                                                       StrokeDashArray="2,2"
+                                                       Fill="Transparent"
+                                                       IsHitTestVisible="False"/>
+                                            <Image x:Name="CreativeDetectedAppIcon"
+                                                   Visibility="Collapsed"
+                                                   Stretch="UniformToFill">
+                                                <Image.Clip>
+                                                    <RectangleGeometry Rect="0,0,64,64"/>
+                                                </Image.Clip>
+                                            </Image>
+                                            <SymbolIcon x:Name="CreativeDetectedAppIconFallback"
+                                                        Symbol="Edit"
+                                                        HorizontalAlignment="Center"
+                                                        VerticalAlignment="Center"
+                                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                        </Grid>
+                                    </Border>
+
+                                    <StackPanel Grid.Column="1"
+                                                VerticalAlignment="Center"
+                                                Spacing="4">
+                                        <TextBlock x:Name="CreativeDetectedAppText"
+                                                   Text="None"
+                                                   Style="{StaticResource CardTitleTextStyle}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   MaxLines="1"/>
+                                        <TextBlock x:Name="CreativeDetectedProjectText"
+                                                   Text="Launch a supported app to update your status."
+                                                   Style="{StaticResource SecondaryBodyTextStyle}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                   TextWrapping="WrapWholeWords"
+                                                   MaxLines="2"/>
+                                    </StackPanel>
+                                </Grid>
+
+                                <Grid ColumnSpacing="10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <Border Grid.Column="0"
+                                            Padding="10,8"
+                                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="10">
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Window"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                            <TextBlock x:Name="CreativeDetectedWindowText"
+                                                       Text="None"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       TextWrapping="WrapWholeWords"
+                                                       MaxLines="2"/>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Grid.Column="1"
+                                            Padding="10,8"
+                                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="10">
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Process"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                            <TextBlock x:Name="CreativeDetectedProcessText"
+                                                       Text="None"
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       TextWrapping="WrapWholeWords"
+                                                       MaxLines="2"/>
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
                             </StackPanel>
                         </Border>
 
                         <Border Style="{StaticResource SettingsCardStyle}">
+                            <StackPanel Spacing="10">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="Enable Creativity RPC" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                                        <TextBlock Text="Turns the Creativity detector/pipeline on or off without touching your media/browser pipeline."
+                                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                   TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ToggleSwitch Grid.Column="1" x:Name="CreativeEnableToggle" IsOn="True"
+                                                  Toggled="OnCreativeToggleChanged"
+                                                  VerticalAlignment="Center"/>
+                                </Grid>
+
+                                <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+
+                                <StackPanel Spacing="4">
+                                    <TextBlock x:Name="CreativeMvpHeadlineText" Text="Creativity RPC (MVP detector idle)"
+                                               Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                                    <TextBlock x:Name="CreativeMvpSummaryText"
+                                               Text="C++ Adobe app/window detection is running separately as a clean MVP foundation. Foreground Adobe is preferred, with fallback detection for visible Adobe windows."
+                                               Style="{StaticResource CaptionTextBlockStyle}"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <StackPanel x:Name="CreativeSettingsControlsPanel" Spacing="12">
+                            <Border Style="{StaticResource SettingsCardStyle}">
+                                <StackPanel Spacing="10">
+                                    <TextBlock Text="Routing &amp; detection"
+                                               Style="{StaticResource BodyStrongTextBlockStyle}"/>
+
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Text="Creativity priority"
+                                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                        <ComboBox x:Name="CreativePriorityCombo"
+                                                  SelectedIndex="0"
+                                                  SelectionChanged="OnCreativeSelectionChanged">
+                                            <ComboBoxItem Content="Auto (Recommended)"/>
+                                            <ComboBoxItem Content="Prefer Media"/>
+                                            <ComboBoxItem Content="Prefer Creativity"/>
+                                        </ComboBox>
+                                    </StackPanel>
+
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Text="Detection mode"
+                                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                        <ComboBox x:Name="CreativeDetectionModeCombo"
+                                                  SelectedIndex="0"
+                                                  SelectionChanged="OnCreativeSelectionChanged">
+                                            <ComboBoxItem Content="Foreground preferred + visible fallback (Recommended)"/>
+                                            <ComboBoxItem Content="Foreground only"/>
+                                            <ComboBoxItem Content="Visible Adobe window only"/>
+                                        </ComboBox>
+                                    </StackPanel>
+
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="Show project/file name" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                                            <TextBlock Text="Uses window-title heuristics for the preview (C++ only for now)."
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                       TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                        <ToggleSwitch Grid.Column="1" x:Name="CreativeShowProjectToggle" IsOn="True"
+                                                      Toggled="OnCreativeToggleChanged"
+                                                      VerticalAlignment="Center"/>
+                                    </Grid>
+
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="Show window title (debug-style)" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                                            <TextBlock Text="Useful for tuning heuristics later; hidden by default."
+                                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                       TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                        <ToggleSwitch Grid.Column="1" x:Name="CreativeShowWindowTitleToggle" IsOn="False"
+                                                      Toggled="OnCreativeToggleChanged"
+                                                      VerticalAlignment="Center"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource SettingsCardStyle}">
+                                <StackPanel Spacing="10">
+                                    <TextBlock Text="Per-app enable list"
+                                               Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                                    <TextBlock Text="Only enabled apps are allowed into the Creativity pipeline preview."
+                                               Style="{StaticResource CaptionTextBlockStyle}"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               TextWrapping="Wrap"/>
+
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Button Grid.Column="1"
+                                                Content="Select all"
+                                                Click="OnCreativeSelectAllAppsClicked"/>
+                                        <Button Grid.Column="2"
+                                                Content="Deselect all"
+                                                Margin="8,0,0,0"
+                                                Click="OnCreativeDeselectAllAppsClicked"/>
+                                    </Grid>
+
+                                    <Grid ColumnSpacing="20" RowSpacing="6">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+
+                                        <CheckBox Grid.Row="0" Grid.Column="0" x:Name="CreativeAppPhotoshopCheck"
+                                                  Content="Photoshop" IsChecked="True"
+                                                  Checked="OnCreativeAppFilterToggled"
+                                                  Unchecked="OnCreativeAppFilterToggled"/>
+                                        <CheckBox Grid.Row="0" Grid.Column="1" x:Name="CreativeAppIllustratorCheck"
+                                                  Content="Illustrator" IsChecked="True"
+                                                  Checked="OnCreativeAppFilterToggled"
+                                                  Unchecked="OnCreativeAppFilterToggled"/>
+                                        <CheckBox Grid.Row="0" Grid.Column="2" x:Name="CreativeAppPremiereCheck"
+                                                  Content="Premiere Pro" IsChecked="True"
+                                                  Checked="OnCreativeAppFilterToggled"
+                                                  Unchecked="OnCreativeAppFilterToggled"/>
+
+                                        <CheckBox Grid.Row="1" Grid.Column="0" x:Name="CreativeAppAfterEffectsCheck"
+                                                  Content="After Effects" IsChecked="True"
+                                                  Checked="OnCreativeAppFilterToggled"
+                                                  Unchecked="OnCreativeAppFilterToggled"/>
+                                        <CheckBox Grid.Row="1" Grid.Column="1" x:Name="CreativeAppInDesignCheck"
+                                                  Content="InDesign" IsChecked="True"
+                                                  Checked="OnCreativeAppFilterToggled"
+                                                  Unchecked="OnCreativeAppFilterToggled"/>
+                                        <CheckBox Grid.Row="1" Grid.Column="2" x:Name="CreativeAppAuditionCheck"
+                                                  Content="Audition" IsChecked="True"
+                                                  Checked="OnCreativeAppFilterToggled"
+                                                  Unchecked="OnCreativeAppFilterToggled"/>
+
+                                        <CheckBox Grid.Row="2" Grid.Column="0" x:Name="CreativeAppMediaEncoderCheck"
+                                                  Content="Media Encoder" IsChecked="True"
+                                                  Checked="OnCreativeAppFilterToggled"
+                                                  Unchecked="OnCreativeAppFilterToggled"/>
+                                        <CheckBox Grid.Row="2" Grid.Column="1" x:Name="CreativeAppLightroomCheck"
+                                                  Content="Lightroom" IsChecked="True"
+                                                  Checked="OnCreativeAppFilterToggled"
+                                                  Unchecked="OnCreativeAppFilterToggled"/>
+                                        <CheckBox Grid.Row="2" Grid.Column="2" x:Name="CreativeAppLightroomClassicCheck"
+                                                  Content="Lightroom Classic" IsChecked="True"
+                                                  Checked="OnCreativeAppFilterToggled"
+                                                  Unchecked="OnCreativeAppFilterToggled"/>
+
+                                        <CheckBox Grid.Row="3" Grid.Column="0" x:Name="CreativeAppInCopyCheck"
+                                                  Content="InCopy" IsChecked="True"
+                                                  Checked="OnCreativeAppFilterToggled"
+                                                  Unchecked="OnCreativeAppFilterToggled"/>
+                                        <CheckBox Grid.Row="3" Grid.Column="1" x:Name="CreativeAppDreamweaverCheck"
+                                                  Content="Dreamweaver" IsChecked="True"
+                                                  Checked="OnCreativeAppFilterToggled"
+                                                  Unchecked="OnCreativeAppFilterToggled"/>
+                                        <CheckBox Grid.Row="3" Grid.Column="2" x:Name="CreativeAppAnimateCheck"
+                                                  Content="Animate" IsChecked="True"
+                                                  Checked="OnCreativeAppFilterToggled"
+                                                  Unchecked="OnCreativeAppFilterToggled"/>
+
+                                        <CheckBox Grid.Row="4" Grid.Column="0" x:Name="CreativeAppXdCheck"
+                                                  Content="XD" IsChecked="True"
+                                                  Checked="OnCreativeAppFilterToggled"
+                                                  Unchecked="OnCreativeAppFilterToggled"/>
+                                        <CheckBox Grid.Row="4" Grid.Column="1" x:Name="CreativeAppBridgeCheck"
+                                                  Content="Bridge" IsChecked="True"
+                                                  Checked="OnCreativeAppFilterToggled"
+                                                  Unchecked="OnCreativeAppFilterToggled"/>
+                                        <CheckBox Grid.Row="4" Grid.Column="2" x:Name="CreativeAppCharacterAnimatorCheck"
+                                                  Content="Character Animator" IsChecked="True"
+                                                  Checked="OnCreativeAppFilterToggled"
+                                                  Unchecked="OnCreativeAppFilterToggled"/>
+
+                                        <CheckBox Grid.Row="5" Grid.Column="0" x:Name="CreativeAppFrescoCheck"
+                                                  Content="Fresco" IsChecked="True"
+                                                  Checked="OnCreativeAppFilterToggled"
+                                                  Unchecked="OnCreativeAppFilterToggled"/>
+                                        <CheckBox Grid.Row="5" Grid.Column="1" x:Name="CreativeAppDimensionCheck"
+                                                  Content="Dimension" IsChecked="True"
+                                                  Checked="OnCreativeAppFilterToggled"
+                                                  Unchecked="OnCreativeAppFilterToggled"/>
+                                        <CheckBox Grid.Row="5" Grid.Column="2" x:Name="CreativeAppSubstanceCheck"
+                                                  Content="Substance 3D apps" IsChecked="True"
+                                                  Checked="OnCreativeAppFilterToggled"
+                                                  Unchecked="OnCreativeAppFilterToggled"/>
+
+                                        <CheckBox Grid.Row="6" Grid.Column="0" x:Name="CreativeAppAcrobatCheck"
+                                                  Content="Acrobat" IsChecked="True"
+                                                  Checked="OnCreativeAppFilterToggled"
+                                                  Unchecked="OnCreativeAppFilterToggled"/>
+                                        <CheckBox Grid.Row="6" Grid.Column="1" x:Name="CreativeAppOtherAdobeCheck"
+                                                  Content="Other Adobe apps" IsChecked="True"
+                                                  Checked="OnCreativeAppFilterToggled"
+                                                  Unchecked="OnCreativeAppFilterToggled"/>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource SettingsCardStyle}">
+                                <StackPanel Spacing="10">
+                                    <TextBlock Text="Privacy &amp; idle behavior"
+                                               Style="{StaticResource BodyStrongTextBlockStyle}"/>
+
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Text="Privacy mode"
+                                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                        <ComboBox x:Name="CreativePrivacyCombo"
+                                                  SelectedIndex="0"
+                                                  SelectionChanged="OnCreativeSelectionChanged">
+                                            <ComboBoxItem Content="Normal"/>
+                                            <ComboBoxItem Content="App only"/>
+                                            <ComboBoxItem Content="Private"/>
+                                        </ComboBox>
+                                    </StackPanel>
+
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Text="Idle behavior"
+                                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                        <ComboBox x:Name="CreativeIdleBehaviorCombo"
+                                                  SelectedIndex="0"
+                                                  SelectionChanged="OnCreativeSelectionChanged">
+                                            <ComboBoxItem Content="Hold last creativity activity (5s)"/>
+                                            <ComboBoxItem Content="Clear immediately"/>
+                                        </ComboBox>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <Border Style="{StaticResource SettingsCardStyle}">
                             <StackPanel Spacing="8">
-                                <TextBlock Text="Planned integrations"
+                                <TextBlock Text="Future planned integration"
                                            Style="{StaticResource BodyStrongTextBlockStyle}"/>
-                                <TextBlock Text="Adobe Photoshop, Illustrator, Premiere Pro, After Effects, Lightroom, Figma, Blender, and other creator tools."
+                                <TextBlock Text="Planned non-Adobe creator tools: Blender, Autodesk Maya, Figma, and similar creative apps."
                                            Style="{StaticResource CaptionTextBlockStyle}"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                            TextWrapping="Wrap"/>
@@ -802,7 +1928,12 @@
                 </ScrollViewer>
 
                 <!-- ============ SETTINGS PAGE ============ -->
-                <ScrollViewer x:Name="SettingsPage" Visibility="Collapsed">
+                <ScrollViewer x:Name="SettingsPage"
+                              Visibility="Collapsed"
+                              VerticalScrollMode="Enabled"
+                              VerticalScrollBarVisibility="Hidden"
+                              HorizontalScrollMode="Disabled"
+                              HorizontalScrollBarVisibility="Disabled">
                     <StackPanel>
                         <StackPanel.ChildrenTransitions>
                             <TransitionCollection>
@@ -884,6 +2015,96 @@
                                                   Toggled="OnTrayLeftClickToggleToggled"
                                                   VerticalAlignment="Center"/>
                                 </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Text="DISCORD ACTIVITY TYPES" Style="{StaticResource SectionOverlineTextStyle}"
+                                   Margin="0,16,0,12"/>
+
+                        <Border Style="{StaticResource SettingsCardStyle}">
+                            <StackPanel Spacing="10">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="Media activity type" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                                        <TextBlock Text="Controls how Music/Media appears on Discord"
+                                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                    </StackPanel>
+                                    <ComboBox Grid.Column="1"
+                                              x:Name="MediaActivityTypeCombo"
+                                              MinWidth="220"
+                                              SelectedIndex="0"
+                                              SelectionChanged="OnActivityTypeSelectionChanged"
+                                              VerticalAlignment="Center">
+                                        <ComboBoxItem Content="Auto (Default)"/>
+                                        <ComboBoxItem Content="Playing (0)"/>
+                                        <ComboBoxItem Content="Listening (2)"/>
+                                        <ComboBoxItem Content="Watching (3)"/>
+                                        <ComboBoxItem Content="Competing (5)"/>
+                                    </ComboBox>
+                                </Grid>
+
+                                <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="Creativity activity type" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                                        <TextBlock Text="Controls how Creativity appears on Discord"
+                                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                    </StackPanel>
+                                    <ComboBox Grid.Column="1"
+                                              x:Name="CreativeActivityTypeCombo"
+                                              MinWidth="220"
+                                              SelectedIndex="0"
+                                              SelectionChanged="OnActivityTypeSelectionChanged"
+                                              VerticalAlignment="Center">
+                                        <ComboBoxItem Content="Auto (Default)"/>
+                                        <ComboBoxItem Content="Playing (0)"/>
+                                        <ComboBoxItem Content="Listening (2)"/>
+                                        <ComboBoxItem Content="Watching (3)"/>
+                                        <ComboBoxItem Content="Competing (5)"/>
+                                    </ComboBox>
+                                </Grid>
+
+                                <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="Productive activity type" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                                        <TextBlock Text="Controls how Productive apps appear on Discord"
+                                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                    </StackPanel>
+                                    <ComboBox Grid.Column="1"
+                                              x:Name="ProductiveActivityTypeCombo"
+                                              MinWidth="220"
+                                              SelectedIndex="0"
+                                              SelectionChanged="OnActivityTypeSelectionChanged"
+                                              VerticalAlignment="Center">
+                                        <ComboBoxItem Content="Auto (Default)"/>
+                                        <ComboBoxItem Content="Playing (0)"/>
+                                        <ComboBoxItem Content="Listening (2)"/>
+                                        <ComboBoxItem Content="Watching (3)"/>
+                                        <ComboBoxItem Content="Competing (5)"/>
+                                    </ComboBox>
+                                </Grid>
+
+                                <TextBlock Text="Supported values in this app: 0, 2, 3, 5"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             </StackPanel>
                         </Border>
 
@@ -978,6 +2199,31 @@
                             <StackPanel Spacing="8">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="Appearance" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                                        <TextBlock Text="Choose Light, Dark, or follow the system theme"
+                                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                    </StackPanel>
+                                    <ComboBox Grid.Column="1"
+                                              x:Name="ThemeModeCombo"
+                                              MinWidth="220"
+                                              SelectedIndex="2"
+                                              SelectionChanged="OnThemeSelectionChanged"
+                                              VerticalAlignment="Center">
+                                        <ComboBoxItem Content="Light Mode"/>
+                                        <ComboBoxItem Content="Dark Mode"/>
+                                        <ComboBoxItem Content="Follow System Default"/>
+                                    </ComboBox>
+                                </Grid>
+
+                                <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="Auto"/>
@@ -1022,7 +2268,7 @@
                                                    Style="{StaticResource CaptionTextBlockStyle}"
                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                                     </StackPanel>
-                                    <TextBlock Grid.Column="2" Text="v1.0.0"
+                                    <TextBlock Grid.Column="2" Text="v2.0.0"
                                                Style="{StaticResource CaptionTextBlockStyle}"
                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                                 </Grid>
