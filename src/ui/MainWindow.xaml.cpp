@@ -55,7 +55,7 @@ namespace
         static constexpr int StandardMs = 220;
         static constexpr int SlowMs = 320;
         static constexpr int ProgressStepMs = 860;
-        static constexpr int PageTransitionMs = 260;
+        static constexpr int PageTransitionMs = 170;
         static constexpr int LivePulseMs = 980;
         static constexpr int SkeletonPulseMs = 700;
         static constexpr int SkeletonDwellMs = 600;
@@ -104,6 +104,7 @@ namespace
     constexpr wchar_t kAppSettingsRegistryPath[] = L"Software\\LastProjects\\LastRichPresence";
     constexpr wchar_t kLaunchOnStartupRegistryValueName[] = L"LaunchOnStartup";
     constexpr wchar_t kStartMinimizedRegistryValueName[] = L"StartMinimizedToTray";
+    constexpr wchar_t kShowDefaultIdleStatusRegistryValueName[] = L"ShowDefaultIdleStatus";
     constexpr wchar_t kStartMinimizedArgument[] = L"--start-minimized";
     constexpr int32_t kDefaultWindowWidth = 1230;
     constexpr int32_t kDefaultWindowHeight = 845;
@@ -642,6 +643,18 @@ namespace
             hintBlob.find(L"telegram") != std::wstring::npos ||
             hintBlob.find(L"web.whatsapp") != std::wstring::npos ||
             hintBlob.find(L"t.me") != std::wstring::npos;
+    }
+
+    bool HasFreshBrowserHint()
+    {
+        auto& state = GetHintServerState();
+        std::lock_guard<std::mutex> lock(state.mutex);
+
+        if (!IsExtensionConnected(state) || !state.hasHint)
+            return false;
+
+        auto age = std::chrono::steady_clock::now() - state.hint.updatedAt;
+        return age <= std::chrono::seconds(25);
     }
 
     std::wstring StripExeSuffix(std::wstring value)
@@ -1508,6 +1521,13 @@ namespace
 
         if (result.extensionConnected && IsBrowserMedia(result.media))
         {
+            if (!HasFreshBrowserHint() && !result.media.isPlaying)
+            {
+                result.media = {};
+                result.mode = MergeMode::NoMedia;
+                return result;
+            }
+
             result.media.detectionReason = L"extension:pending";
             if (result.media.detectionScore < 30)
                 result.media.detectionScore = 30;
@@ -2306,13 +2326,10 @@ namespace winrt::Last_Rich_Presence::implementation
 
         ApplyLaunchOnStartupState(m_launchOnStartup, false);
 
-        if ((m_startMinimizedToTray || IsStartMinimizedLaunchRequested()) && m_dispatcherQueue)
+        if (m_startMinimizedToTray || IsStartMinimizedLaunchRequested())
         {
-            m_dispatcherQueue.TryEnqueue([this]()
-            {
-                if (!m_isShuttingDown)
-                    HideWindowToTray();
-            });
+            if (!m_isShuttingDown)
+                HideWindowToTray();
         }
 
         // Route detector events to UI thread first, then update UI + presence there
@@ -2576,6 +2593,8 @@ namespace winrt::Last_Rich_Presence::implementation
         if (!m_windowHandle)
             return;
 
+        // If app started hidden, the XAML window may not have been activated yet.
+        Activate();
         ShowWindow(m_windowHandle, SW_SHOW);
         ShowWindow(m_windowHandle, SW_RESTORE);
         SetForegroundWindow(m_windowHandle);
@@ -3103,6 +3122,10 @@ namespace winrt::Last_Rich_Presence::implementation
             auto scrollViewer = page.try_as<ScrollViewer>();
             if (!scrollViewer)
                 return;
+
+            if (scrollViewer.VerticalOffset() <= 0.5)
+                return;
+
             try
             {
                 scrollViewer.ChangeView(nullptr, 0.0, nullptr, true);
@@ -3138,8 +3161,8 @@ namespace winrt::Last_Rich_Presence::implementation
 
         bool forward = pageOrder(tag) >= pageOrder(hstring(m_activePageTag));
         bool involvesSettings = (tag == L"Settings" || hstring(m_activePageTag) == L"Settings");
-        double incomingOffset = involvesSettings ? 14.0 : 28.0;
-        double outgoingOffset = involvesSettings ? 8.0 : 16.0;
+        double incomingOffset = involvesSettings ? 10.0 : 16.0;
+        double outgoingOffset = involvesSettings ? 6.0 : 10.0;
 
         if (m_pageTransitionStoryboard)
         {
@@ -3391,7 +3414,13 @@ namespace winrt::Last_Rich_Presence::implementation
             HomeMiniTitle().Text(L"Nothing playing");
             HomeMiniArtist().Text(L"Start playback or activity");
             HomeMiniTimer().Text(L"0:00 / 0:00");
-            HomeMiniPlayIcon().Glyph(L"\xE768");
+            HomeMiniPlayIcon().Glyph(L"\xE711");
+            HomeMiniStatusText().Text(L"Off");
+            auto mutedBrush = Application::Current().Resources()
+                .Lookup(box_value(L"TextFillColorSecondaryBrush"))
+                .as<Brush>();
+            HomeMiniPlayIcon().Foreground(mutedBrush);
+            HomeMiniStatusText().Foreground(mutedBrush);
             TransitionElementVisibility(HomePausedChip(), false, 4.0);
 
             MusicEmptyState().Visibility(Visibility::Visible);
@@ -3454,6 +3483,16 @@ namespace winrt::Last_Rich_Presence::implementation
     {
         if (m_isInitializing) return;
         m_presence->SetShowAlbumArt(AlbumArtToggle().IsOn());
+        SaveSettings();
+        m_presence->RefreshPresence();
+    }
+
+    void MainWindow::OnDefaultIdleStatusToggled(IInspectable const&, RoutedEventArgs const&)
+    {
+        if (m_isInitializing) return;
+        m_showDefaultIdleStatus = DefaultIdleStatusToggle().IsOn();
+        m_presence->SetShowIdleStatus(m_showDefaultIdleStatus);
+        WriteUserPreferenceBool(kShowDefaultIdleStatusRegistryValueName, m_showDefaultIdleStatus);
         SaveSettings();
         m_presence->RefreshPresence();
     }
@@ -4098,6 +4137,7 @@ namespace winrt::Last_Rich_Presence::implementation
         SourceDebugToggle().IsOn(false);
         PausedToggle().IsOn(true);
         AlbumArtToggle().IsOn(true);
+        DefaultIdleStatusToggle().IsOn(true);
 
         CloseToTrayToggle().IsOn(true);
         LaunchOnStartupToggle().IsOn(false);
@@ -4133,6 +4173,7 @@ namespace winrt::Last_Rich_Presence::implementation
         m_sensitiveKeywordFilter = true;
         m_strictBrowserPrivacy = false;
         m_suppressBrowserAlbumArt = false;
+        m_showDefaultIdleStatus = true;
         m_themeMode = AppThemeMode::FollowSystem;
         m_blockedAppSiteTermsRaw.clear();
         m_mediaActivityTypeOverride = -1;
@@ -4147,6 +4188,7 @@ namespace winrt::Last_Rich_Presence::implementation
         m_presence->SetShowSource(true);
         m_presence->SetShowPaused(true);
         m_presence->SetShowAlbumArt(true);
+        m_presence->SetShowIdleStatus(true);
         m_presence->SetSensitiveKeywordFilter(true);
         m_presence->SetStrictBrowserPrivacy(false);
         m_presence->SetSuppressBrowserAlbumArt(false);
@@ -4239,6 +4281,7 @@ namespace winrt::Last_Rich_Presence::implementation
             SourceDebugToggle().IsOn(readBool(L"SourceDebugMode", SourceDebugToggle().IsOn()));
             PausedToggle().IsOn(readBool(L"ShowPaused", PausedToggle().IsOn()));
             AlbumArtToggle().IsOn(readBool(L"ShowAlbumArt", AlbumArtToggle().IsOn()));
+            DefaultIdleStatusToggle().IsOn(readBool(L"ShowDefaultIdleStatus", DefaultIdleStatusToggle().IsOn()));
 
             CloseToTrayToggle().IsOn(readBool(L"CloseToTrayOnClose", CloseToTrayToggle().IsOn()));
             LaunchOnStartupToggle().IsOn(readBool(L"LaunchOnStartup", LaunchOnStartupToggle().IsOn()));
@@ -4311,6 +4354,7 @@ namespace winrt::Last_Rich_Presence::implementation
             m_sensitiveKeywordFilter = SensitiveFilterToggle().IsOn();
             m_strictBrowserPrivacy = StrictBrowserPrivacyToggle().IsOn();
             m_suppressBrowserAlbumArt = SuppressBrowserArtToggle().IsOn();
+            m_showDefaultIdleStatus = DefaultIdleStatusToggle().IsOn();
             m_themeMode = ThemeModeFromComboIndex(ThemeModeCombo().SelectedIndex());
             SyncActivityTypeOverridesFromControls();
             ApplyActivityTypeOverrides();
@@ -4319,6 +4363,7 @@ namespace winrt::Last_Rich_Presence::implementation
             m_presence->SetShowSource(SourceToggle().IsOn());
             m_presence->SetShowPaused(PausedToggle().IsOn());
             m_presence->SetShowAlbumArt(AlbumArtToggle().IsOn());
+            m_presence->SetShowIdleStatus(m_showDefaultIdleStatus);
             m_presence->SetSensitiveKeywordFilter(m_sensitiveKeywordFilter);
             m_presence->SetStrictBrowserPrivacy(m_strictBrowserPrivacy);
             m_presence->SetSuppressBrowserAlbumArt(m_suppressBrowserAlbumArt);
@@ -6007,7 +6052,13 @@ namespace winrt::Last_Rich_Presence::implementation
             HomeMiniArtist().Text(L"Start playback or activity");
             HomeMiniTimer().Text(L"0:00 / 0:00");
             SetHomeMiniProgress(0);
-            HomeMiniPlayIcon().Glyph(L"\xE768");
+            HomeMiniPlayIcon().Glyph(L"\xE160");
+            HomeMiniStatusText().Text(L"Waiting");
+            auto mutedBrush = Application::Current().Resources()
+                .Lookup(box_value(L"TextFillColorSecondaryBrush"))
+                .as<Brush>();
+            HomeMiniPlayIcon().Foreground(mutedBrush);
+            HomeMiniStatusText().Foreground(mutedBrush);
             TransitionElementVisibility(HomePausedChip(), false, 4.0);
             SetHomeMiniWaveActive(false);
             SetSongWaveActive(false);
@@ -6040,6 +6091,14 @@ namespace winrt::Last_Rich_Presence::implementation
         PlayPauseIcon().Glyph(glyph);
         PlaybackStateText().Text(info.isPlaying ? L"Playing" : L"Paused");
         HomeMiniPlayIcon().Glyph(glyph);
+        HomeMiniStatusText().Text(info.isPlaying ? L"Live" : L"Paused");
+        auto statusBrush = Application::Current().Resources()
+            .Lookup(box_value(info.isPlaying
+                ? L"AccentTextFillColorPrimaryBrush"
+                : L"TextFillColorSecondaryBrush"))
+            .as<Brush>();
+        HomeMiniPlayIcon().Foreground(statusBrush);
+        HomeMiniStatusText().Foreground(statusBrush);
 
         SongTitle().Text(info.title);
         ArtistName().Text(info.artist.empty() ? L"\x2014" : info.artist);
@@ -6248,6 +6307,7 @@ namespace winrt::Last_Rich_Presence::implementation
         root.Insert(L"SourceDebugMode", JsonValue::CreateBooleanValue(SourceDebugToggle().IsOn()));
         root.Insert(L"ShowPaused", JsonValue::CreateBooleanValue(PausedToggle().IsOn()));
         root.Insert(L"ShowAlbumArt", JsonValue::CreateBooleanValue(AlbumArtToggle().IsOn()));
+        root.Insert(L"ShowDefaultIdleStatus", JsonValue::CreateBooleanValue(m_showDefaultIdleStatus));
 
         root.Insert(L"CloseToTrayOnClose", JsonValue::CreateBooleanValue(m_closeToTrayOnClose));
         root.Insert(L"LaunchOnStartup", JsonValue::CreateBooleanValue(m_launchOnStartup));
@@ -7108,6 +7168,11 @@ namespace winrt::Last_Rich_Presence::implementation
             kStartMinimizedRegistryValueName,
             startMinimizedFromRegistry);
 
+        bool showDefaultIdleStatusFromRegistry = false;
+        bool hasShowDefaultIdleStatusRegistryValue = TryReadUserPreferenceBool(
+            kShowDefaultIdleStatusRegistryValueName,
+            showDefaultIdleStatusFromRegistry);
+
         try
         {
             auto localSettings = Windows::Storage::ApplicationData::Current().LocalSettings();
@@ -7147,6 +7212,12 @@ namespace winrt::Last_Rich_Presence::implementation
             auto art = readBool(L"ShowAlbumArt", AlbumArtToggle().IsOn());
             AlbumArtToggle().IsOn(art);
             m_presence->SetShowAlbumArt(art);
+
+            m_showDefaultIdleStatus = readBool(L"ShowDefaultIdleStatus", DefaultIdleStatusToggle().IsOn());
+            if (hasShowDefaultIdleStatusRegistryValue)
+                m_showDefaultIdleStatus = showDefaultIdleStatusFromRegistry;
+            DefaultIdleStatusToggle().IsOn(m_showDefaultIdleStatus);
+            m_presence->SetShowIdleStatus(m_showDefaultIdleStatus);
 
             m_closeToTrayOnClose = readBool(L"CloseToTrayOnClose", CloseToTrayToggle().IsOn());
             CloseToTrayToggle().IsOn(m_closeToTrayOnClose);
@@ -7264,6 +7335,13 @@ namespace winrt::Last_Rich_Presence::implementation
             m_startMinimizedToTray = startMinimizedFromRegistry;
             StartMinimizedToggle().IsOn(m_startMinimizedToTray);
         }
+
+        if (hasShowDefaultIdleStatusRegistryValue)
+        {
+            m_showDefaultIdleStatus = showDefaultIdleStatusFromRegistry;
+            DefaultIdleStatusToggle().IsOn(m_showDefaultIdleStatus);
+            m_presence->SetShowIdleStatus(m_showDefaultIdleStatus);
+        }
     }
 
     void MainWindow::SaveSettings()
@@ -7277,6 +7355,7 @@ namespace winrt::Last_Rich_Presence::implementation
             values.Insert(L"SourceDebugMode", box_value(SourceDebugToggle().IsOn()));
             values.Insert(L"ShowPaused", box_value(PausedToggle().IsOn()));
             values.Insert(L"ShowAlbumArt", box_value(AlbumArtToggle().IsOn()));
+            values.Insert(L"ShowDefaultIdleStatus", box_value(m_showDefaultIdleStatus));
 
             values.Insert(L"CloseToTrayOnClose", box_value(m_closeToTrayOnClose));
             values.Insert(L"LaunchOnStartup", box_value(m_launchOnStartup));
@@ -7335,6 +7414,7 @@ namespace winrt::Last_Rich_Presence::implementation
         // Keep Win32 registry fallbacks for unpackaged installs.
         WriteUserPreferenceBool(kLaunchOnStartupRegistryValueName, m_launchOnStartup);
         WriteUserPreferenceBool(kStartMinimizedRegistryValueName, m_startMinimizedToTray);
+        WriteUserPreferenceBool(kShowDefaultIdleStatusRegistryValueName, m_showDefaultIdleStatus);
     }
 
     // =====================================================================

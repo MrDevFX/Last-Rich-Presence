@@ -22,7 +22,7 @@
                         <Border Padding="8,2" CornerRadius="999"
                                 VerticalAlignment="Center"
                                 Background="{ThemeResource SubtleFillColorSecondaryBrush}">
-                            <TextBlock Text="v2.0.0"
+                            <TextBlock Text="v2.1.1"
                                        Style="{StaticResource CaptionTextBlockStyle}"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                         </Border>
@@ -109,7 +109,6 @@
                     <StackPanel>
                         <StackPanel.ChildrenTransitions>
                             <TransitionCollection>
-                                <EntranceThemeTransition FromVerticalOffset="28" IsStaggeringEnabled="True"/>
                                 <RepositionThemeTransition/>
                             </TransitionCollection>
                         </StackPanel.ChildrenTransitions>
@@ -281,13 +280,13 @@
                                             BorderThickness="1"
                                             CornerRadius="999">
                                         <StackPanel Orientation="Horizontal" Spacing="6">
-                                            <FontIcon x:Name="HomeMiniPlayIcon" Glyph="&#xE768;"
+                                            <FontIcon x:Name="HomeMiniPlayIcon" Glyph="&#xE160;"
                                                       FontSize="12"
                                                       VerticalAlignment="Center"
-                                                      Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
-                                            <TextBlock Text="Live"
+                                                      Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                            <TextBlock x:Name="HomeMiniStatusText" Text="Waiting"
                                                        Style="{StaticResource CaptionTextBlockStyle}"
-                                                       Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                                         </StackPanel>
                                     </Border>
                                 </Grid>
@@ -940,7 +939,6 @@
                     <StackPanel>
                         <StackPanel.ChildrenTransitions>
                             <TransitionCollection>
-                                <EntranceThemeTransition FromVerticalOffset="24" IsStaggeringEnabled="True"/>
                                 <RepositionThemeTransition/>
                             </TransitionCollection>
                         </StackPanel.ChildrenTransitions>
@@ -1228,7 +1226,6 @@
                     <StackPanel>
                         <StackPanel.ChildrenTransitions>
                             <TransitionCollection>
-                                <EntranceThemeTransition FromVerticalOffset="20" IsStaggeringEnabled="True"/>
                                 <RepositionThemeTransition/>
                             </TransitionCollection>
                         </StackPanel.ChildrenTransitions>
@@ -1514,7 +1511,6 @@
                     <StackPanel>
                         <StackPanel.ChildrenTransitions>
                             <TransitionCollection>
-                                <EntranceThemeTransition FromVerticalOffset="20" IsStaggeringEnabled="True"/>
                                 <RepositionThemeTransition/>
                             </TransitionCollection>
                         </StackPanel.ChildrenTransitions>
@@ -2015,6 +2011,24 @@
                                                   Toggled="OnTrayLeftClickToggleToggled"
                                                   VerticalAlignment="Center"/>
                                 </Grid>
+
+                                <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="Show Default Idle Status" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                                        <TextBlock Text="When idle, show: &quot;Playing Last Rich Presence - Waiting for media or activity&quot;"
+                                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                    </StackPanel>
+                                    <ToggleSwitch Grid.Column="1" x:Name="DefaultIdleStatusToggle" IsOn="True"
+                                                  Toggled="OnDefaultIdleStatusToggled"
+                                                  VerticalAlignment="Center"/>
+                                </Grid>
                             </StackPanel>
                         </Border>
 
@@ -2268,7 +2282,7 @@
                                                    Style="{StaticResource CaptionTextBlockStyle}"
                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                                     </StackPanel>
-                                    <TextBlock Grid.Column="2" Text="v2.0.0"
+                                    <TextBlock Grid.Column="2" Text="v2.1.1"
                                                Style="{StaticResource CaptionTextBlockStyle}"
                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                                 </Grid>

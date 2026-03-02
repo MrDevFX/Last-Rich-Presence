@@ -26,7 +26,16 @@ Last Rich Presence keeps your Discord status aligned with what you are doing on 
   <img src="Assets/v2.0.0-preview.png" alt="Last Rich Presence Interface" width="980" />      
 </p>
 
-## What's New in v2.0.0
+## What's New in v2.1.1
+
+- Start minimized now launches silently to tray (startup flash removed).
+- `Show Default Idle Status` moved to `Settings > App Behavior` and now persists reliably across restarts.
+- Home media state now clears stale paused browser sessions and returns to `Waiting` when no activity is active.
+- Transition/animation responsiveness improved when switching between `Home`, `Music`, `Creativity`, and `Productivity`.
+- Inno updater reliability improved for locked runtime files during upgrade.
+- Installer no longer includes a `Launch at sign-in` option; startup is managed from in-app Settings.
+
+## Major Changes in v2.0.0
 
 - Dedicated `Creativity` and `Productivity` pages, detectors, and Discord presence pipelines.
 - Per-category controls for detection mode, activity type, privacy, and app filtering.
@@ -123,6 +132,7 @@ Notes:
 
 - `Release-Inno` is unpackaged + self-contained and intended for Inno Setup release flow.
 - Runtime dependencies are copied into the output during `Release-Inno` build for clean-PC compatibility.
+- Installer startup checkbox is intentionally removed; use in-app `Launch on Windows startup` setting.
 
 Build MSIX profile:
 
