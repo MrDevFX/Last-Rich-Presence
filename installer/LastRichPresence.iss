@@ -1,5 +1,5 @@
 #define MyAppName "Last Rich Presence"
-#define MyAppVersion "2.1.1"
+#define MyAppVersion "2.5.0"
 #define MyAppPublisher "Last Projects"
 #define MyAppURL "https://lastprojects.com/"
 #define MyAppExeName "Last_Rich_Presence.exe"

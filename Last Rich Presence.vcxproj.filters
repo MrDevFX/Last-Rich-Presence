@@ -23,9 +23,15 @@
     <Page Include="src\ui\MainWindow.xaml">
       <Filter>src\ui</Filter>
     </Page>
+    <Page Include="src\ui\SettingsDiagnosticsPanel.xaml">
+      <Filter>src\ui</Filter>
+    </Page>
   </ItemGroup>
   <ItemGroup>
     <Midl Include="src\ui\MainWindow.idl">
+      <Filter>src\ui</Filter>
+    </Midl>
+    <Midl Include="src\ui\SettingsDiagnosticsPanel.idl">
       <Filter>src\ui</Filter>
     </Midl>
   </ItemGroup>
@@ -37,6 +43,12 @@
       <Filter>src\core</Filter>
     </ClCompile>
     <ClCompile Include="src\core\CreativePresenceManager.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\ProductiveDetector.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\ProductivePresenceManager.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
     <ClCompile Include="src\core\MediaDetector.cpp">
@@ -52,9 +64,26 @@
     <ClCompile Include="src\ui\MainWindow.xaml.cpp">
       <Filter>src\ui</Filter>
     </ClCompile>
-    <ClCompile Include="src\core\PresenceManager.cpp" />
+    <ClCompile Include="src\ui\SettingsDiagnosticsPanel.xaml.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\PresenceManager.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\SettingsStore.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\StartupRegistration.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\core\ActivityPresenceHelpers.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\AppEnums.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
     <ClInclude Include="src\core\pch.h">
       <Filter>src\core</Filter>
     </ClInclude>
@@ -76,7 +105,33 @@
     <ClInclude Include="src\ui\MainWindow.xaml.h">
       <Filter>src\ui</Filter>
     </ClInclude>
-    <ClInclude Include="src\core\PresenceManager.h" />
+    <ClInclude Include="src\ui\SettingsDiagnosticsPanel.xaml.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\DiagnosticsLog.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\ProductiveDetector.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\ProductivePresenceManager.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\PresenceManager.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\SettingsModels.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\SettingsStore.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\StartupRegistration.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
+    <ClInclude Include="src\core\TextUtilities.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Image Include="Assets\Wide310x150Logo.scale-200.png">

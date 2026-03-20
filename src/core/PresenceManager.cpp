@@ -192,6 +192,7 @@ bool PresenceManager::IsConnected() const
 void PresenceManager::SetShowTimestamps(bool show) { m_showTimestamps = show; }
 void PresenceManager::SetShowPaused(bool show)     { m_showPaused = show; }
 void PresenceManager::SetShowSource(bool show)     { m_showSource = show; }
+void PresenceManager::SetShowIdleStatus(bool show) { m_showIdleStatus = show; }
 void PresenceManager::SetSensitiveKeywordFilter(bool enabled) { m_sensitiveKeywordFilter = enabled; }
 void PresenceManager::SetStrictBrowserPrivacy(bool enabled) { m_strictBrowserPrivacy = enabled; }
 
@@ -344,6 +345,27 @@ void PresenceManager::ClearMedia()
     BuildAndSendIdlePresence();
 }
 
+void PresenceManager::ClearPresence()
+{
+    ++m_currentRequestID;
+
+    {
+        std::lock_guard lock(m_mediaMutex);
+        m_lastMedia = {};
+    }
+    {
+        std::lock_guard lock(m_artMutex);
+        m_artUrl.clear();
+        m_artCacheKey.clear();
+    }
+    {
+        std::lock_guard lock(m_artWorkerMutex);
+        m_hasPendingArtJob = false;
+    }
+
+    m_discord.ClearPresence();
+}
+
 void PresenceManager::RefreshPresence()
 {
     MediaInfo info;
@@ -361,10 +383,22 @@ void PresenceManager::RefreshPresence()
 
 void PresenceManager::BuildAndSendIdlePresence()
 {
-    // Media idle should clear the media app activity entirely so separate
-    // app IDs (Creativity/Productive) can surface without an always-on
-    // placeholder media card.
-    m_discord.ClearPresence();
+    if (!m_showIdleStatus)
+    {
+        // Keep media idle fully silent when the idle status card is disabled.
+        m_discord.ClearPresence();
+        return;
+    }
+
+    DiscordPresenceData presence{};
+    presence.activityType = ResolveActivityTypeOrDefault(m_activityTypeOverride.load(), 0);
+    presence.playing = true;
+    presence.name = "Last Rich Presence";
+    presence.details = "Waiting for media or activity";
+    presence.state = "Idle";
+    presence.largeImageKey = "music";
+    presence.largeImageText = "Last Rich Presence";
+    m_discord.UpdatePresence(presence);
 }
 
 void PresenceManager::BuildAndSendPresence(const MediaInfo& info)

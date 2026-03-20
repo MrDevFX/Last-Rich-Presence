@@ -2,7 +2,7 @@
   <img src="Assets/Wide310x150Logo.scale-200.png" alt="Last Rich Presence" width="420" />
 
   <h1>Last Rich Presence</h1>
-  <p><strong>Windows app for accurate, polished Discord Rich Presence for media, creative, and productivity workflows.</strong></p>
+  <p><strong>Windows app for accurate, polished Discord Rich Presence across media, creative, and productivity workflows.</strong></p>
 
   <p>
     <img src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Windows 10/11" />
@@ -14,192 +14,168 @@
 
 ## What It Does
 
-Last Rich Presence keeps your Discord status aligned with what you are doing on Windows across three activity lanes:
+Last Rich Presence keeps Discord aligned with what you are doing on Windows across three activity lanes:
 
 - Media playback via Windows media sessions, with optional browser companion hints for better web timeline accuracy.
-- Creative app activity via Adobe-family desktop app detection.
-- Productivity app activity via Microsoft Office desktop app detection.
+- Creativity activity via Adobe-family desktop app detection.
+- Productivity activity via supported desktop productivity apps, including Microsoft Office apps and Codex.
+
+The app is single-instance, supports tray-first workflows, can start minimized to tray, and persists in-app settings including the global Rich Presence master toggle.
 
 ## Interface Preview
 
 <p align="center">
-  <img src="Assets/v2.0.0-preview.png" alt="Last Rich Presence Interface" width="980" />      
+  <img src="Assets/v2.0.0-preview.png" alt="Last Rich Presence Interface" width="980" />
 </p>
-
-## What's New in v2.1.1
-
-- Start minimized now launches silently to tray (startup flash removed).
-- `Show Default Idle Status` moved to `Settings > App Behavior` and now persists reliably across restarts.
-- Home media state now clears stale paused browser sessions and returns to `Waiting` when no activity is active.
-- Transition/animation responsiveness improved when switching between `Home`, `Music`, `Creativity`, and `Productivity`.
-- Inno updater reliability improved for locked runtime files during upgrade.
-- Installer no longer includes a `Launch at sign-in` option; startup is managed from in-app Settings.
-
-## Major Changes in v2.0.0
-
-- Dedicated `Creativity` and `Productivity` pages, detectors, and Discord presence pipelines.
-- Per-category controls for detection mode, activity type, privacy, and app filtering.
-- Tray/startup reliability improvements for unpackaged (`Inno`) installs.
-- Split release profiles: `Release-Inno` and `Release-MSIX`.
 
 ## Highlights
 
-### Desktop App
+- Accurate media presence with GSMTC detection, browser-hint timeline arbitration, and source heuristics.
+- Separate Creativity and Productivity Discord pipelines with dedicated app IDs, allowing them to coexist with media activity as separate Discord cards.
+- Tray integration for show/hide, global Rich Presence enable or disable, and exit.
+- Persisted settings for startup behavior, privacy controls, per-app filters, theme, activity type overrides, and diagnostics export/import.
+- Optional Chromium MV3 companion extension for supported web players.
 
-- Detects active media sessions via GSMTC.
-- Builds rich Discord presence with title, artist, timeline, and playback state.
-- Uses timeline quality arbitration to avoid stale or incorrect timestamps.
-- Adds dedicated `Creativity` and `Productivity` pipelines with their own detectors and Discord app IDs.
-- Supports per-category detection modes, privacy modes, app filters, and activity type overrides.
-- Includes tray behavior controls (`close to tray`, `launch on startup`, `start minimized to tray`) with persistence.
-- Includes polished WinUI animations, activity cards, and wave timeline visuals.
-- Supports App Theme Mode (Light, Dark, and System Default).
-- Adds privacy controls for sensitive content and browser-source handling.
-- Provides diagnostics plus settings export/import.
+## Activity Lanes
 
-### Creativity Mode
+### Media
 
-- Detects Adobe-family desktop workflows from active/visible windows.
+- Detects active Windows media sessions.
+- Builds Discord presence with title, artist, album, playback state, and timeline.
+- Supports album art, source display, paused-state handling, idle-card behavior, and activity type override.
+- Adds browser-specific privacy controls, blocked app/site terms, and optional browser album-art suppression.
+
+### Creativity
+
+- Detects supported Adobe-family desktop apps from foreground and visible windows.
 - Detection modes: `ForegroundPreferredVisibleFallback`, `ForegroundOnly`, `VisibleWindowOnly`.
 - Privacy modes: `Normal`, `AppOnly`, `Private`.
-- Controls for showing project name and window title.
-- Idle behavior options and media-vs-creativity priority controls.
+- Supports project-name display, window-title display, idle behavior, media-vs-creativity priority, per-app filters, and activity type override.
 
-### Productivity Mode
+### Productivity
 
-- Detects Microsoft Office workflows from active/visible windows.
+- Detects supported desktop productivity apps from foreground and visible windows.
 - Detection modes: `ForegroundPreferredVisibleFallback`, `ForegroundOnly`, `VisibleWindowOnly`.
-- Privacy modes: `Normal`, `AppOnly`, `Private`.
-- Controls for showing project name and window title.
-- Activity type override support for Discord display style.
+- Supports project or file-name display, per-app filters, and activity type override.
 
-### Optional Browser Extension
-
-- Sends high-confidence media hints from web players to the desktop app.
-- Uses token-based local transport (`/v1/browser-hint/token`, `/v1/browser-hint`).
-- Provides popup controls to enable/disable sources and view forwarding state.
-
-### Supported Web Sources (Extension)
-
-YouTube, YouTube Music, Spotify Web, SoundCloud, Apple Music (web), Amazon Music (web), Deezer, TIDAL, JioSaavn, Gaana, Wynk Music, Bandcamp, Mixcloud, and Twitch media pages.
-
-### Supported Desktop Sources
+## Supported Desktop Apps
 
 - Creativity: Adobe Photoshop, Illustrator, Premiere Pro, After Effects, InDesign, Audition, Media Encoder, Lightroom, Lightroom Classic, InCopy, Dreamweaver, Animate, XD, Bridge, Character Animator, Fresco, Dimension, Substance 3D Painter, Substance 3D Designer, Substance 3D Sampler, Substance 3D Stager, Substance 3D Modeler, Acrobat.
-- Productivity: Microsoft Word, Excel, PowerPoint, OneNote, Access, Publisher, Visio, Project.
+- Productivity: Word, Excel, PowerPoint, OneNote, Access, Publisher, Visio, Project, Codex.
 
-### Category App Filters
+## Supported Web Sources
 
-- Creativity filters include individual Adobe app toggles (Photoshop/Illustrator/Premiere/etc.), Acrobat, and Other Adobe.
-- Productivity filters include per-app toggles for Word, Excel, PowerPoint, OneNote, Access, Publisher, Visio, and Project.
+The optional browser extension currently provides high-confidence hints for:
+
+- YouTube
+- YouTube Music
+- Spotify Web
+- SoundCloud
+- Apple Music (web)
+- Amazon Music (web)
+- Deezer
+- TIDAL
+- JioSaavn
+- Gaana
+- Wynk Music
+- Bandcamp
+- Mixcloud
+- Twitch media pages
 
 ## Requirements
 
+### Runtime
+
 - Windows 10/11
-- Visual Studio 2026 with Desktop development for C++
-- Node.js (used by verification for extension syntax checks)
-- Inno Setup 6 (optional, for building `.exe` installer output)
+- Discord desktop client
 
-## Build
+### Build
 
-1. Open `Last Rich Presence.sln` in Visual Studio 2026.
-2. Select a configuration and platform (`x64` recommended):
-   - `Debug` / `Release`: standard development builds.
-   - `Release-Inno`: unpackaged, self-contained build for Inno installer publishing.
-   - `Release-MSIX`: packaged MSIX build path.
-3. Build the solution.
-4. Run the app from Visual Studio.
+- Visual Studio 2026 with Desktop development for C++ installed
+- MSVC toolset `v145`
+- Windows SDK / Build Tools required by the solution
+- Node.js on `PATH` for browser-extension syntax checks in verification
+- Inno Setup 6 if you want to build the unpackaged installer
 
-## Manual Release Builds
+## Build and Verify
 
-Build Inno-ready binaries:
+Open [Last Rich Presence.sln](Last%20Rich%20Presence.sln) in Visual Studio and build one of these configurations:
 
-```powershell
-msbuild "Last Rich Presence.sln" -t:Build -p:Configuration=Release-Inno -p:Platform=x64 -m
-```
+| Configuration | Purpose |
+| --- | --- |
+| `Debug` / `Release` | Standard development builds |
+| `Release-Inno` | Unpackaged, self-contained build for Inno installer releases |
+| `Release-MSIX` | Packaged MSIX build path |
 
-Compile installer:
+Quick verification:
 
 ```powershell
-"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "installer\LastRichPresence.iss"
-```
-
-Installer output:
-
-`dist\LastRichPresence-Setup-x64.exe`
-
-Notes:
-
-- `Release-Inno` is unpackaged + self-contained and intended for Inno Setup release flow.
-- Runtime dependencies are copied into the output during `Release-Inno` build for clean-PC compatibility.
-- Installer startup checkbox is intentionally removed; use in-app `Launch on Windows startup` setting.
-
-Build MSIX profile:
-
-```powershell
-msbuild "Last Rich Presence.sln" -t:Build -p:Configuration=Release-MSIX -p:Platform=x64 -m
-```
-
-## Verify Locally
-
-PowerShell:
-
-```powershell
-.\scripts\verify.ps1
-```
-
-CMD:
-
-```cmd
-.\scripts\verify.cmd
-```
-
-Optional configuration:
-
-```powershell
-.\scripts\verify.ps1 -Configuration Release -Platform x64
+.\scripts\verify.ps1 -Configuration Debug -Platform x64
 ```
 
 Also supported:
 
 ```powershell
+.\scripts\verify.ps1 -Configuration Release -Platform x64
 .\scripts\verify.ps1 -Configuration Release-Inno -Platform x64
 .\scripts\verify.ps1 -Configuration Release-MSIX -Platform x64
 ```
 
-The script runs solution build, extension JavaScript syntax checks, and test artifact discovery.
+The verification script builds the solution, runs browser-extension JavaScript syntax checks, and executes the native guard tests when the test binary is available.
 
-## Browser Extension Setup (Optional)
+## Browser Extension Setup
 
 1. Open `chrome://extensions` or `edge://extensions`.
 2. Enable **Developer mode**.
 3. Click **Load unpacked**.
 4. Select the `browser-extension/` folder.
 
+The extension communicates with the desktop app through a local token-protected bridge on `127.0.0.1` / `localhost`.
+
+## Release Packaging
+
+For installer-focused release steps, use the dedicated guide:
+
+- [installer/INSTALLER_GUIDE.md](installer/INSTALLER_GUIDE.md)
+
+Typical release outputs:
+
+- Inno installer: `dist\LastRichPresence-Setup-x64.exe`
+- MSIX build artifacts: produced from `Release-MSIX`
+
+## Privacy and Network Notes
+
+- The optional browser extension sends local playback hints to the desktop app over `localhost`.
+- Media album-art fallback may issue outbound requests to `itunes.apple.com`.
+- If direct album art is unavailable and a thumbnail is available, the app can upload image bytes to Imgur for a fallback asset URL.
+- If you do not want browser album-art behavior, use the in-app browser privacy and album-art settings.
+
+## Testing and Contributor Notes
+
+- Automated coverage is currently limited to the native guard-test project in [tests/RefactorGuardTests](tests/RefactorGuardTests).
+- There is no broad UI or end-to-end automation yet.
+- Current builds may emit duplicate `WindowsAppRuntimeAutoInitializer` warnings; these are known build warnings.
+- Curated fallback app logos are bundled in `Assets\CreativeLogos` and `Assets\ProductiveLogos`.
+
 ## Project Structure
 
 ```text
 Last Rich Presence/
 |- src/
-|  |- core/                 # Detection, presence building, Discord IPC
-|  |- ui/                   # WinUI pages, navigation, settings, animations
+|  |- core/                 # Detection, presence building, settings, Discord IPC
+|  |- ui/                   # WinUI shell, pages, settings, tray, animations
 |- browser-extension/       # Optional MV3 companion extension
-|- installer/               # Inno Setup script and installer assets
-|- scripts/                 # Verification scripts
-|- Assets/                  # App logos and package images
+|- installer/               # Inno Setup script and installer guide
+|- scripts/                 # Build and verification scripts
+|- tests/                   # Native guard tests
+|- Assets/                  # App branding and curated fallback logos
 |- Last Rich Presence.sln   # Visual Studio solution
 ```
 
 ## Troubleshooting
 
-- If build fails with `LNK1201`, close any running app instance and stop locked `mspdbsrv` processes, then rebuild.
-- If extension changes do not appear, reload the unpacked extension.
+- If build fails with `LNK1201` or `LNK1104`, close any running app instance and rebuild.
 - If Rich Presence does not update, ensure Discord desktop is running.
-- If startup settings do not apply, verify `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\LastRichPresence`.
-- If installer build is unexpectedly tiny, ensure you built `Release-Inno` before compiling Inno setup.
-
-## Roadmap
-
-- Expand app coverage in `Productivity` and `Creative` categories.
-- Continue timeline and source-detection accuracy improvements.
-- Improve release packaging and docs.
+- If extension changes do not appear, reload the unpacked extension.
+- If startup settings do not apply for unpackaged installs, verify `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\LastRichPresence`.
+- If repeated launches appear to do nothing, the app may already be running in the tray; this is expected because the app redirects secondary launches to the existing instance.

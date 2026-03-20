@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "CreativeDetector.h"
+#include "TextUtilities.h"
 
 #include <algorithm>
 #include <cwctype>
@@ -12,27 +13,6 @@ namespace
         std::wstring key;
         std::wstring name;
     };
-
-    std::wstring ToLowerCopy(std::wstring value)
-    {
-        std::transform(value.begin(), value.end(), value.begin(),
-            [](wchar_t ch) { return static_cast<wchar_t>(towlower(ch)); });
-        return value;
-    }
-
-    std::wstring TrimCopy(std::wstring value)
-    {
-        auto isWs = [](wchar_t ch)
-        {
-            return ch == L' ' || ch == L'\t' || ch == L'\r' || ch == L'\n';
-        };
-
-        while (!value.empty() && isWs(value.front()))
-            value.erase(value.begin());
-        while (!value.empty() && isWs(value.back()))
-            value.pop_back();
-        return value;
-    }
 
     bool Contains(const std::wstring& haystackLower, const wchar_t* needleLower)
     {
@@ -76,7 +56,7 @@ namespace
             return false;
 
         buffer.resize(static_cast<size_t>(written));
-        titleOut = TrimCopy(std::move(buffer));
+        titleOut = lrp::TrimCopy(std::move(buffer));
         return !titleOut.empty();
     }
 
@@ -100,8 +80,8 @@ namespace
             return false;
 
         path.resize(size);
-        processPathOut = TrimCopy(path);
-        exeNameOut = TrimCopy(BaseNameFromPath(path));
+        processPathOut = lrp::TrimCopy(path);
+        exeNameOut = lrp::TrimCopy(BaseNameFromPath(path));
         return !processPathOut.empty() && !exeNameOut.empty();
     }
 
@@ -320,11 +300,11 @@ namespace
 
     bool IsLikelyAppSuffix(std::wstring part, const AdobeProcessMatch& app)
     {
-        part = ToLowerCopy(TrimCopy(std::move(part)));
+        part = lrp::ToLowerCopy(lrp::TrimCopy(std::move(part)));
         if (part.empty())
             return false;
 
-        auto appLower = ToLowerCopy(app.name);
+        auto appLower = lrp::ToLowerCopy(app.name);
 
         return
             part == appLower ||
@@ -334,62 +314,12 @@ namespace
             Contains(part, L"welcome");
     }
 
-    std::wstring JoinParts(const std::vector<std::wstring>& parts, size_t count)
-    {
-        std::wstring joined;
-        for (size_t i = 0; i < count; ++i)
-        {
-            if (i > 0) joined += L" - ";
-            joined += parts[i];
-        }
-        return joined;
-    }
-
-    std::vector<std::wstring> SplitTitle(const std::wstring& title)
-    {
-        std::vector<std::wstring> parts;
-        size_t start = 0;
-        while (start <= title.size())
-        {
-            auto pos = title.find(L" - ", start);
-            if (pos == std::wstring::npos)
-            {
-                parts.push_back(title.substr(start));
-                break;
-            }
-
-            parts.push_back(title.substr(start, pos - start));
-            start = pos + 3;
-        }
-
-        for (auto& part : parts)
-            part = TrimCopy(std::move(part));
-
-        return parts;
-    }
-
     std::wstring ExtractProjectHint(const std::wstring& windowTitle, const AdobeProcessMatch& app)
     {
-        auto title = TrimCopy(windowTitle);
-        if (title.empty())
-            return {};
-
-        auto parts = SplitTitle(title);
-        if (parts.empty())
-            return title;
-
-        size_t keepCount = parts.size();
-        while (keepCount > 1 && IsLikelyAppSuffix(parts[keepCount - 1], app))
-            --keepCount;
-
-        auto result = TrimCopy(JoinParts(parts, keepCount));
-        if (result.empty())
-            result = title;
-
-        if (IsLikelyAppSuffix(result, app))
-            return {};
-
-        return result;
+        return lrp::ExtractProjectHint(windowTitle, [&](const std::wstring& part)
+        {
+            return IsLikelyAppSuffix(part, app);
+        });
     }
 
     bool TryBuildCreativeInfoForWindow(HWND hwnd, CreativeActivityInfo& infoOut)
@@ -408,7 +338,7 @@ namespace
         if (!TryGetWindowTitle(hwnd, windowTitle))
             return false;
 
-        auto lowerTitle = ToLowerCopy(windowTitle);
+        auto lowerTitle = lrp::ToLowerCopy(windowTitle);
         if (lowerTitle == L"program manager")
             return false;
 
@@ -418,7 +348,7 @@ namespace
             return false;
 
         AdobeProcessMatch app{};
-        auto exeLower = ToLowerCopy(exeName);
+        auto exeLower = lrp::ToLowerCopy(exeName);
         if (!MatchAdobeCreativeProcess(exeLower, app))
             return false;
 

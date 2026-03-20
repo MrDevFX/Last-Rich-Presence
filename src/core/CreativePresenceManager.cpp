@@ -1,46 +1,9 @@
 #include "pch.h"
 #include "CreativePresenceManager.h"
+#include "ActivityPresenceHelpers.h"
+#include "SettingsModels.h"
 
 #include <algorithm>
-
-namespace
-{
-    bool IsSupportedActivityType(int value)
-    {
-        return value == 0 || value == 2 || value == 3 || value == 5;
-    }
-
-    std::wstring TrimCopy(std::wstring value)
-    {
-        auto isWs = [](wchar_t ch)
-        {
-            return ch == L' ' || ch == L'\t' || ch == L'\r' || ch == L'\n';
-        };
-
-        while (!value.empty() && isWs(value.front()))
-            value.erase(value.begin());
-        while (!value.empty() && isWs(value.back()))
-            value.pop_back();
-        return value;
-    }
-
-    std::wstring ClampWide(std::wstring value, size_t maxChars)
-    {
-        value = TrimCopy(std::move(value));
-        if (maxChars == 0)
-            return {};
-
-        if (value.size() <= maxChars)
-            return value;
-
-        if (maxChars <= 3)
-            return value.substr(0, maxChars);
-
-        value.resize(maxChars - 3);
-        value += L"...";
-        return value;
-    }
-}
 
 CreativePresenceManager::CreativePresenceManager()
     : m_discord(APP_ID)
@@ -60,7 +23,9 @@ void CreativePresenceManager::Initialize()
 
     m_discord.Initialize();
     m_initialized = true;
-    m_lastWasClear = true;
+    // A fresh Discord connection may still need an explicit clear before any
+    // activity is published, especially after the app is toggled off/on.
+    m_lastWasClear = false;
     m_lastFingerprint.clear();
 }
 
@@ -85,15 +50,12 @@ bool CreativePresenceManager::IsConnected() const
 
 std::string CreativePresenceManager::WideToUtf8(const std::wstring& wide)
 {
-    if (wide.empty())
-        return {};
-    return winrt::to_string(winrt::hstring(wide));
+    return lrp::WideToUtf8(wide);
 }
 
 std::string CreativePresenceManager::ClampWideField(const std::wstring& wide, size_t maxChars)
 {
-    auto clamped = ClampWide(wide, maxChars);
-    return WideToUtf8(clamped);
+    return lrp::ClampWideField(wide, maxChars);
 }
 
 std::string CreativePresenceManager::BuildAssetKeyForApp(const std::wstring& appKey)
@@ -126,19 +88,7 @@ std::string CreativePresenceManager::BuildAssetKeyForApp(const std::wstring& app
 
 std::string CreativePresenceManager::BuildPresenceFingerprint(const DiscordPresenceData& data)
 {
-    std::ostringstream oss;
-    oss << data.name << '\n'
-        << data.details << '\n'
-        << data.state << '\n'
-        << data.largeImageKey << '\n'
-        << data.largeImageText << '\n'
-        << data.smallImageKey << '\n'
-        << data.smallImageText << '\n'
-        << data.startTimestamp << '\n'
-        << data.endTimestamp << '\n'
-        << data.activityType << '\n'
-        << (data.playing ? 1 : 0);
-    return oss.str();
+    return lrp::BuildPresenceFingerprint(data);
 }
 
 void CreativePresenceManager::UpdateCreativeActivity(const CreativeActivityInfo& info, const CreativePresenceOptions& options)
@@ -149,7 +99,7 @@ void CreativePresenceManager::UpdateCreativeActivity(const CreativeActivityInfo&
         return;
     }
 
-    std::wstring appName = TrimCopy(info.appName);
+    std::wstring appName = lrp::TrimCopy(info.appName);
     if (appName.empty())
         appName = L"Adobe Creativity App";
 
@@ -163,8 +113,8 @@ void CreativePresenceManager::UpdateCreativeActivity(const CreativeActivityInfo&
     }
     else
     {
-        std::wstring project = options.showProjectName ? TrimCopy(info.projectHint) : L"";
-        std::wstring window = options.showWindowTitle ? TrimCopy(info.windowTitle) : L"";
+        std::wstring project = options.showProjectName ? lrp::TrimCopy(info.projectHint) : L"";
+        std::wstring window = options.showWindowTitle ? lrp::TrimCopy(info.windowTitle) : L"";
 
         if (!project.empty())
             details = L"Working on " + project;
@@ -183,7 +133,7 @@ void CreativePresenceManager::UpdateCreativeActivity(const CreativeActivityInfo&
         state = L"Held activity";
 
     DiscordPresenceData presence{};
-    presence.activityType = IsSupportedActivityType(options.activityTypeOverride)
+    presence.activityType = lrp::settings::IsSupportedActivityType(options.activityTypeOverride)
         ? options.activityTypeOverride
         : 0; // Playing
     presence.playing = true;

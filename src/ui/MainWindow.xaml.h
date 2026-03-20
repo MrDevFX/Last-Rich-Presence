@@ -1,6 +1,8 @@
 #pragma once
 
 #include "MainWindow.g.h"
+#include "AppEnums.h"
+#include "DiagnosticsLog.h"
 #include "MediaDetector.h"
 #include "PresenceManager.h"
 #include "CreativeDetector.h"
@@ -8,43 +10,15 @@
 #include "ProductiveDetector.h"
 #include "ProductivePresenceManager.h"
 
-#include <deque>
-
 namespace winrt::Last_Rich_Presence::implementation
 {
-    enum class CreativePriorityMode
-    {
-        Auto = 0,
-        PreferMedia = 1,
-        PreferCreative = 2
-    };
-
-    enum class CreativePrivacyMode
-    {
-        Normal = 0,
-        AppOnly = 1,
-        Private = 2
-    };
-
-    enum class CreativeIdleBehavior
-    {
-        HoldLast5Seconds = 0,
-        ClearImmediately = 1
-    };
-
-    enum class AppThemeMode
-    {
-        FollowSystem = 0,
-        Light = 1,
-        Dark = 2
-    };
-
     struct MainWindow : MainWindowT<MainWindow>
     {
         MainWindow() = default;
         ~MainWindow();
 
         void InitWindow();
+        void HandleRedirectedActivation();
 
         // XAML event handlers
         void OnEnableToggled(winrt::Windows::Foundation::IInspectable const& sender,
@@ -61,6 +35,8 @@ namespace winrt::Last_Rich_Presence::implementation
                              winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
         void OnAlbumArtToggled(winrt::Windows::Foundation::IInspectable const& sender,
                                winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
+        void OnDefaultIdleStatusToggled(winrt::Windows::Foundation::IInspectable const& sender,
+                                        winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
         void OnCloseToTrayToggled(winrt::Windows::Foundation::IInspectable const& sender,
                                   winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
         void OnLaunchOnStartupToggled(winrt::Windows::Foundation::IInspectable const& sender,
@@ -81,6 +57,8 @@ namespace winrt::Last_Rich_Presence::implementation
                                             winrt::Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const& e);
         void OnProductiveToggleChanged(winrt::Windows::Foundation::IInspectable const& sender,
                                        winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
+        void OnProductiveMetadataToggled(winrt::Windows::Foundation::IInspectable const& sender,
+                                         winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
         void OnProductiveSelectionChanged(winrt::Windows::Foundation::IInspectable const& sender,
                                           winrt::Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const& e);
         void OnProductiveAppFilterToggled(winrt::Windows::Foundation::IInspectable const& sender,
@@ -113,6 +91,7 @@ namespace winrt::Last_Rich_Presence::implementation
                                            winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
 
     private:
+        void ApplyGlobalEnableRuntimeState();
         void ShutdownWindow();
         void InitializeSystemTray();
         void CleanupSystemTray();
@@ -128,6 +107,7 @@ namespace winrt::Last_Rich_Presence::implementation
         void OnProductiveActivityChanged(const ProductiveActivityInfo& info);
         void OnCreativeActivityChanged(const CreativeActivityInfo& info);
         void UpdateUI(const MediaInfo& info);
+        void RefreshMediaPresenceOutput();
         void UpdateProductivePreview(const ProductiveActivityInfo& info);
         void UpdateCreativePreview(const CreativeActivityInfo& info);
         void ApplyProductiveRuntimeState();
@@ -220,6 +200,7 @@ namespace winrt::Last_Rich_Presence::implementation
         bool m_sensitiveKeywordFilter{true};
         bool m_strictBrowserPrivacy{false};
         bool m_suppressBrowserAlbumArt{false};
+        bool m_showDefaultIdleStatus{true};
         int m_mediaActivityTypeOverride{-1};
         int m_productiveActivityTypeOverride{-1};
         int m_creativeActivityTypeOverride{-1};
@@ -227,6 +208,7 @@ namespace winrt::Last_Rich_Presence::implementation
         bool m_productivePresenceRunning{false};
         bool m_productiveEnabled{true};
         ProductiveDetectionMode m_productiveDetectionMode{ProductiveDetectionMode::ForegroundPreferredVisibleFallback};
+        bool m_productiveShowProjectName{true};
         bool m_productiveWordEnabled{true};
         bool m_productiveExcelEnabled{true};
         bool m_productivePowerPointEnabled{true};
@@ -235,6 +217,7 @@ namespace winrt::Last_Rich_Presence::implementation
         bool m_productivePublisherEnabled{true};
         bool m_productiveVisioEnabled{true};
         bool m_productiveProjectEnabled{true};
+        bool m_productiveCodexEnabled{true};
         bool m_creativePresenceRunning{false};
         bool m_creativeEnabled{true};
         CreativePriorityMode m_creativePriority{CreativePriorityMode::Auto};
@@ -269,7 +252,7 @@ namespace winrt::Last_Rich_Presence::implementation
         HWND m_windowHandle{ nullptr };
         WNDPROC m_originalWndProc{ nullptr };
         HICON m_trayIconHandle{ nullptr };
-        std::deque<std::wstring> m_diagnosticLines;
+        lrp::DiagnosticsLog m_diagnosticLog;
         std::wstring m_lastMergeState;
         std::wstring m_lastUiTrackKey;
         std::wstring m_lastUiSourceKey;

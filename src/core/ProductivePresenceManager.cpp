@@ -1,46 +1,9 @@
 #include "pch.h"
 #include "ProductivePresenceManager.h"
+#include "ActivityPresenceHelpers.h"
+#include "SettingsModels.h"
 
 #include <algorithm>
-
-namespace
-{
-    bool IsSupportedActivityType(int value)
-    {
-        return value == 0 || value == 2 || value == 3 || value == 5;
-    }
-
-    std::wstring TrimCopy(std::wstring value)
-    {
-        auto isWs = [](wchar_t ch)
-        {
-            return ch == L' ' || ch == L'\t' || ch == L'\r' || ch == L'\n';
-        };
-
-        while (!value.empty() && isWs(value.front()))
-            value.erase(value.begin());
-        while (!value.empty() && isWs(value.back()))
-            value.pop_back();
-        return value;
-    }
-
-    std::wstring ClampWide(std::wstring value, size_t maxChars)
-    {
-        value = TrimCopy(std::move(value));
-        if (maxChars == 0)
-            return {};
-
-        if (value.size() <= maxChars)
-            return value;
-
-        if (maxChars <= 3)
-            return value.substr(0, maxChars);
-
-        value.resize(maxChars - 3);
-        value += L"...";
-        return value;
-    }
-}
 
 ProductivePresenceManager::ProductivePresenceManager()
     : m_discord(APP_ID)
@@ -60,7 +23,9 @@ void ProductivePresenceManager::Initialize()
 
     m_discord.Initialize();
     m_initialized = true;
-    m_lastWasClear = true;
+    // A fresh Discord connection may still need an explicit clear before any
+    // activity is published, especially after the app is toggled off/on.
+    m_lastWasClear = false;
     m_lastFingerprint.clear();
 }
 
@@ -85,15 +50,12 @@ bool ProductivePresenceManager::IsConnected() const
 
 std::string ProductivePresenceManager::WideToUtf8(const std::wstring& wide)
 {
-    if (wide.empty())
-        return {};
-    return winrt::to_string(winrt::hstring(wide));
+    return lrp::WideToUtf8(wide);
 }
 
 std::string ProductivePresenceManager::ClampWideField(const std::wstring& wide, size_t maxChars)
 {
-    auto clamped = ClampWide(wide, maxChars);
-    return WideToUtf8(clamped);
+    return lrp::ClampWideField(wide, maxChars);
 }
 
 std::string ProductivePresenceManager::BuildAssetKeyForApp(const std::wstring& appKey)
@@ -106,24 +68,13 @@ std::string ProductivePresenceManager::BuildAssetKeyForApp(const std::wstring& a
     if (appKey == L"PUBR") return "publisher";
     if (appKey == L"VISI") return "visio";
     if (appKey == L"PROJ") return "project";
+    if (appKey == L"CODX") return "codex";
     return {};
 }
 
 std::string ProductivePresenceManager::BuildPresenceFingerprint(const DiscordPresenceData& data)
 {
-    std::ostringstream oss;
-    oss << data.name << '\n'
-        << data.details << '\n'
-        << data.state << '\n'
-        << data.largeImageKey << '\n'
-        << data.largeImageText << '\n'
-        << data.smallImageKey << '\n'
-        << data.smallImageText << '\n'
-        << data.startTimestamp << '\n'
-        << data.endTimestamp << '\n'
-        << data.activityType << '\n'
-        << (data.playing ? 1 : 0);
-    return oss.str();
+    return lrp::BuildPresenceFingerprint(data);
 }
 
 void ProductivePresenceManager::UpdateProductiveActivity(const ProductiveActivityInfo& info, const ProductivePresenceOptions& options)
@@ -134,7 +85,7 @@ void ProductivePresenceManager::UpdateProductiveActivity(const ProductiveActivit
         return;
     }
 
-    std::wstring appName = TrimCopy(info.appName);
+    std::wstring appName = lrp::TrimCopy(info.appName);
     if (appName.empty())
         appName = L"Microsoft Office";
 
@@ -148,8 +99,8 @@ void ProductivePresenceManager::UpdateProductiveActivity(const ProductiveActivit
     }
     else
     {
-        std::wstring project = options.showProjectName ? TrimCopy(info.projectHint) : L"";
-        std::wstring window = options.showWindowTitle ? TrimCopy(info.windowTitle) : L"";
+        std::wstring project = options.showProjectName ? lrp::TrimCopy(info.projectHint) : L"";
+        std::wstring window = options.showWindowTitle ? lrp::TrimCopy(info.windowTitle) : L"";
 
         if (!project.empty())
             details = L"Working on " + project;
@@ -165,7 +116,7 @@ void ProductivePresenceManager::UpdateProductiveActivity(const ProductiveActivit
     DiscordPresenceData presence{};
     // Default is Competing (5) to coexist with Creativity + Media cards,
     // with optional per-section override from settings.
-    presence.activityType = IsSupportedActivityType(options.activityTypeOverride)
+    presence.activityType = lrp::settings::IsSupportedActivityType(options.activityTypeOverride)
         ? options.activityTypeOverride
         : 5;
     presence.playing = true;

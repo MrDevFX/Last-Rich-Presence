@@ -1,6 +1,6 @@
 # Last Rich Presence Installer Guide
 
-This guide documents the release flow we validated for generating an `.exe` installer with Inno Setup.
+This guide covers the release flow for generating the unpackaged `.exe` installer with Inno Setup.
 
 ## Files
 
@@ -9,47 +9,38 @@ This guide documents the release flow we validated for generating an `.exe` inst
 
 ## Goal
 
-Build an installer that works on other PCs without requiring users to preinstall Windows App Runtime.
+Build a self-contained installer that runs on clean machines without requiring the user to preinstall the Windows App Runtime.
 
-## Important build mode
+## Recommended Build Profile
 
-Use **unpackaged + self-contained** build:
+Use the unpackaged, self-contained profile:
 
-- `WindowsPackageType=None`
-- `AppxPackage=false`
-- `WindowsAppSDKSelfContained=true`
+- Configuration: `Release-Inno`
+- Platform: `x64`
 
-If you build framework-dependent by mistake, the installer becomes very small (~6 MB) and may not work on clean machines.
+This is the preferred release path for the Inno installer.
 
 ## Prerequisites
 
-- Visual Studio/MSBuild installed
-- Inno Setup 6 installed (default path used here):
-  - `C:\Program Files (x86)\Inno Setup 6\ISCC.exe`
+- Visual Studio / MSBuild
+- Inno Setup 6
+- A successful `Release-Inno|x64` build
 
-## Release steps (recommended)
-
-Run from repo root:
+Default Inno compiler path:
 
 ```powershell
-msbuild "Last Rich Presence.sln" -t:Clean `
-  -p:Configuration=Release `
-  -p:Platform=x64 `
-  -p:WindowsPackageType=None `
-  -p:AppxPackage=false `
-  -p:WindowsAppSDKSelfContained=true
+C:\Program Files (x86)\Inno Setup 6\ISCC.exe
 ```
+
+## Release Steps
+
+Build the self-contained app output:
 
 ```powershell
-msbuild "Last Rich Presence.sln" -t:Build `
-  -p:Configuration=Release `
-  -p:Platform=x64 `
-  -p:WindowsPackageType=None `
-  -p:AppxPackage=false `
-  -p:WindowsAppSDKSelfContained=true
+msbuild "Last Rich Presence.sln" -t:Build -p:Configuration=Release-Inno -p:Platform=x64 -m
 ```
 
-Then compile installer:
+Compile the installer:
 
 ```powershell
 "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "installer\LastRichPresence.iss"
@@ -57,13 +48,13 @@ Then compile installer:
 
 ## Output
 
-Installer is generated at:
+Installer output:
 
-`dist\LastRichPresence-Setup-x64.exe`
+```text
+dist\LastRichPresence-Setup-x64.exe
+```
 
-Expected size (self-contained): around `30-35 MB` (observed ~33 MB).
-
-## Quick smoke test (optional)
+## Optional Smoke Test
 
 Silent install:
 
@@ -73,63 +64,67 @@ Silent install:
 
 Installed app location:
 
-`%LOCALAPPDATA%\Programs\Last Rich Presence\Last_Rich_Presence.exe`
+```text
+%LOCALAPPDATA%\Programs\Last Rich Presence\Last_Rich_Presence.exe
+```
 
 ## Troubleshooting
 
-1. Installer is too small (~5-6 MB)
-   - Cause: framework-dependent build was packaged.
-   - Fix: run `Clean` + `Build` again with `WindowsAppSDKSelfContained=true`.
+### Installer is too small
 
-2. App crashes right after launch after changing build mode
-   - Cause: stale mixed artifacts from previous build mode.
-   - Fix: run the full `Clean` step first, then rebuild.
+If the installer is unexpectedly tiny, you likely built the wrong profile.
 
-3. Inno compile works but app missing files
-   - Ensure `x64\Release\Last Rich Presence` exists and contains runtime DLLs.
-   - Rebuild using the exact commands above.
+- Expected fix: rebuild with `Release-Inno|x64`
+- Cause: framework-dependent output was packaged instead of the self-contained release profile
 
-4. "Launch on Windows Startup" toggle does not work (Inno/unpackaged install)
-   - Unpackaged apps cannot rely on `StartupTask` (MSIX-only behavior).
-   - Current app code uses registry fallback: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\LastRichPresence`.
-   - Verify with:
+### App crashes or behaves inconsistently after switching build modes
+
+Likely cause: mixed old artifacts from a previous build mode.
+
+Recommended fix:
+
+```powershell
+msbuild "Last Rich Presence.sln" -t:Clean -p:Configuration=Release-Inno -p:Platform=x64 -m
+msbuild "Last Rich Presence.sln" -t:Build -p:Configuration=Release-Inno -p:Platform=x64 -m
+```
+
+### Installer reports files in use
+
+The app may still be running, often minimized to tray.
+
+The current installer script proactively handles locked files and terminates:
+
+- `Last_Rich_Presence.exe`
+- `RestartAgent.exe`
+
+### Startup toggle does not work for unpackaged installs
+
+Unpackaged installs rely on the registry fallback:
+
+```text
+HKCU\Software\Microsoft\Windows\CurrentVersion\Run\LastRichPresence
+```
+
+Verify with:
 
 ```powershell
 Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name LastRichPresence
 ```
 
-5. Setup says files are in use (`Last_Rich_Presence.exe` or runtime DLLs like `CoreMessagingXP.dll`)
-   - Cause: app/runtime helper is still running (often minimized to tray or auto-started).
-   - Current `.iss` proactively kills both:
-     - `Last_Rich_Presence.exe`
-     - `RestartAgent.exe`
-   - Setup uses:
-     - `CloseApplications=yes` (built-in close-app handling for locked files)
-     - `RestartApplications=no`
-   - Uninstall also runs forced termination:
+### Installed app icon looks generic
 
-```powershell
-taskkill /F /T /IM Last_Rich_Presence.exe
-taskkill /F /T /IM RestartAgent.exe
-```
+Check these paths:
 
-6. Installed app shows generic icon (desktop shortcut / Task Manager / Control Panel)
-   - Ensure icon is embedded into the exe via project resource file:
-     - `app_icon.rc` with `IDI_APP_ICON ICON "Assets\\logo.ico"`
-     - included in project as `ResourceCompile`
-   - Installer shortcut/uninstall icon should point to `Assets\logo.ico` in `.iss`.
-   - If updated icon still does not appear immediately, Windows icon cache may be stale; sign out/in once.
+- App icon resource: `app_icon.rc`
+- Source icon: `Assets\logo.ico`
+- Installer script: `installer\LastRichPresence.iss`
 
-## Notes about current `.iss`
+Windows icon caching can also delay icon refresh.
 
-- Installs per-user by default (`PrivilegesRequired=lowest`).
-- Copies entire build output recursively.
-- Excludes debug/dev artifacts (`*.pdb`, `*.lib`, `*.exp`, etc.).
-- Supports optional desktop icon.
-- Shows license agreement page using:
-  - `installer\LICENSE.txt` (copied from `C:\Users\Dev\Documents\GitHub\Last-Rich-Presence\LICENSE`)
-- Publisher branding in installer metadata:
-  - `AppPublisher=Last Projects`
-  - `AppPublisherURL=https://lastprojects.com/`
-  - `AppSupportURL=https://lastprojects.com/`
-  - `AppUpdatesURL=https://lastprojects.com/`
+## Notes About the Current `.iss`
+
+- Per-user install (`PrivilegesRequired=lowest`)
+- Recursive copy of release output
+- Excludes debug and development artifacts (`*.pdb`, `*.lib`, `*.exp`, etc.)
+- Supports optional desktop icon
+- Uses `installer\LICENSE.txt` for the license page

@@ -98,7 +98,7 @@ Invoke-Step -Name "Extension JS syntax checks" -Action {
     }
 }
 
-Invoke-Step -Name "Test discovery" -Action {
+Invoke-Step -Name "Native tests" -Action {
     $testProjects = @(Get-ChildItem -Path $repoRoot -Recurse -Include *Test*.vcxproj, *Tests*.vcxproj -File)
     $ctestFiles = @(Get-ChildItem -Path $repoRoot -Recurse -Filter CTestTestfile.cmake -File)
 
@@ -107,15 +107,29 @@ Invoke-Step -Name "Test discovery" -Action {
         return
     }
 
-    Write-Host "Found test artifacts:"
     foreach ($project in $testProjects) {
-        Write-Host " - $($project.FullName)"
-    }
-    foreach ($ctest in $ctestFiles) {
-        Write-Host " - $($ctest.FullName)"
+        $projectName = [System.IO.Path]::GetFileNameWithoutExtension($project.Name)
+        $candidateExe = Join-Path $project.DirectoryName "bin\$Platform\$Configuration\$projectName.exe"
+        if (-not (Test-Path $candidateExe)) {
+            $candidateExe = Get-ChildItem -Path $project.DirectoryName -Recurse -Filter "$projectName.exe" -File |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object -First 1 -ExpandProperty FullName
+        }
+
+        if (-not $candidateExe -or -not (Test-Path $candidateExe)) {
+            throw "Could not locate built test executable for $($project.FullName)"
+        }
+
+        Write-Host "Running $candidateExe"
+        & $candidateExe
+        if ($LASTEXITCODE -ne 0) {
+            throw "Native test run failed: $candidateExe"
+        }
     }
 
-    throw "Test artifacts exist but this script has no runner configured for them yet."
+    foreach ($ctest in $ctestFiles) {
+        Write-Host "Found CTest metadata at $($ctest.FullName), but no CTest runner is configured in verify.ps1."
+    }
 }
 
 Write-Host ""

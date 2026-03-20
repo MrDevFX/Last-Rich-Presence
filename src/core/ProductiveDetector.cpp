@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "ProductiveDetector.h"
+#include "TextUtilities.h"
 
 #include <algorithm>
 #include <cwctype>
@@ -7,32 +8,11 @@
 
 namespace
 {
-    struct OfficeProcessMatch
+    struct ProductiveProcessMatch
     {
         std::wstring key;
         std::wstring name;
     };
-
-    std::wstring ToLowerCopy(std::wstring value)
-    {
-        std::transform(value.begin(), value.end(), value.begin(),
-            [](wchar_t ch) { return static_cast<wchar_t>(towlower(ch)); });
-        return value;
-    }
-
-    std::wstring TrimCopy(std::wstring value)
-    {
-        auto isWs = [](wchar_t ch)
-        {
-            return ch == L' ' || ch == L'\t' || ch == L'\r' || ch == L'\n';
-        };
-
-        while (!value.empty() && isWs(value.front()))
-            value.erase(value.begin());
-        while (!value.empty() && isWs(value.back()))
-            value.pop_back();
-        return value;
-    }
 
     bool Contains(const std::wstring& haystackLower, const wchar_t* needleLower)
     {
@@ -76,7 +56,7 @@ namespace
             return false;
 
         buffer.resize(static_cast<size_t>(written));
-        titleOut = TrimCopy(std::move(buffer));
+        titleOut = lrp::TrimCopy(std::move(buffer));
         return !titleOut.empty();
     }
 
@@ -100,12 +80,12 @@ namespace
             return false;
 
         path.resize(size);
-        processPathOut = TrimCopy(path);
-        exeNameOut = TrimCopy(BaseNameFromPath(path));
+        processPathOut = lrp::TrimCopy(path);
+        exeNameOut = lrp::TrimCopy(BaseNameFromPath(path));
         return !processPathOut.empty() && !exeNameOut.empty();
     }
 
-    bool IsIgnoredOfficeProcess(const std::wstring& exeLower)
+    bool IsIgnoredProductiveProcess(const std::wstring& exeLower)
     {
         return
             exeLower == L"outlook.exe" ||
@@ -118,9 +98,9 @@ namespace
             exeLower == L"msoia.exe";
     }
 
-    bool MatchOfficeProductiveProcess(const std::wstring& exeLower, OfficeProcessMatch& matchOut)
+    bool MatchProductiveProcess(const std::wstring& exeLower, ProductiveProcessMatch& matchOut)
     {
-        if (exeLower.empty() || IsIgnoredOfficeProcess(exeLower))
+        if (exeLower.empty() || IsIgnoredProductiveProcess(exeLower))
             return false;
 
         if (exeLower == L"winword.exe")
@@ -163,17 +143,22 @@ namespace
             matchOut = { L"PROJ", L"Microsoft Project" };
             return true;
         }
+        if (exeLower == L"codex.exe" || exeLower == L"codex")
+        {
+            matchOut = { L"CODX", L"Codex" };
+            return true;
+        }
 
         return false;
     }
 
-    bool IsLikelyAppSuffix(std::wstring part, const OfficeProcessMatch& app)
+    bool IsLikelyAppSuffix(std::wstring part, const ProductiveProcessMatch& app)
     {
-        part = ToLowerCopy(TrimCopy(std::move(part)));
+        part = lrp::ToLowerCopy(lrp::TrimCopy(std::move(part)));
         if (part.empty())
             return false;
 
-        auto appLower = ToLowerCopy(app.name);
+        auto appLower = lrp::ToLowerCopy(app.name);
 
         if (part == appLower || Contains(part, appLower.c_str()))
             return true;
@@ -187,65 +172,17 @@ namespace
             part == L"publisher" ||
             part == L"visio" ||
             part == L"project" ||
+            part == L"codex" ||
+            part == L"openai codex" ||
             Contains(part, L"microsoft office");
     }
 
-    std::wstring JoinParts(const std::vector<std::wstring>& parts, size_t count)
+    std::wstring ExtractProjectHint(const std::wstring& windowTitle, const ProductiveProcessMatch& app)
     {
-        std::wstring joined;
-        for (size_t i = 0; i < count; ++i)
+        return lrp::ExtractProjectHint(windowTitle, [&](const std::wstring& part)
         {
-            if (i > 0) joined += L" - ";
-            joined += parts[i];
-        }
-        return joined;
-    }
-
-    std::vector<std::wstring> SplitTitle(const std::wstring& title)
-    {
-        std::vector<std::wstring> parts;
-        size_t start = 0;
-        while (start <= title.size())
-        {
-            auto pos = title.find(L" - ", start);
-            if (pos == std::wstring::npos)
-            {
-                parts.push_back(title.substr(start));
-                break;
-            }
-
-            parts.push_back(title.substr(start, pos - start));
-            start = pos + 3;
-        }
-
-        for (auto& part : parts)
-            part = TrimCopy(std::move(part));
-
-        return parts;
-    }
-
-    std::wstring ExtractProjectHint(const std::wstring& windowTitle, const OfficeProcessMatch& app)
-    {
-        auto title = TrimCopy(windowTitle);
-        if (title.empty())
-            return {};
-
-        auto parts = SplitTitle(title);
-        if (parts.empty())
-            return title;
-
-        size_t keepCount = parts.size();
-        while (keepCount > 1 && IsLikelyAppSuffix(parts[keepCount - 1], app))
-            --keepCount;
-
-        auto result = TrimCopy(JoinParts(parts, keepCount));
-        if (result.empty())
-            result = title;
-
-        if (IsLikelyAppSuffix(result, app))
-            return {};
-
-        return result;
+            return IsLikelyAppSuffix(part, app);
+        });
     }
 
     bool TryBuildProductiveInfoForWindow(HWND hwnd, ProductiveActivityInfo& infoOut)
@@ -264,7 +201,7 @@ namespace
         if (!TryGetWindowTitle(hwnd, windowTitle))
             return false;
 
-        auto lowerTitle = ToLowerCopy(windowTitle);
+        auto lowerTitle = lrp::ToLowerCopy(windowTitle);
         if (lowerTitle == L"program manager")
             return false;
 
@@ -273,9 +210,9 @@ namespace
         if (!TryGetProcessPathAndExeName(processId, processPath, exeName))
             return false;
 
-        OfficeProcessMatch app{};
-        auto exeLower = ToLowerCopy(exeName);
-        if (!MatchOfficeProductiveProcess(exeLower, app))
+        ProductiveProcessMatch app{};
+        auto exeLower = lrp::ToLowerCopy(exeName);
+        if (!MatchProductiveProcess(exeLower, app))
             return false;
 
         infoOut.active = true;
@@ -406,7 +343,7 @@ ProductiveActivityInfo ProductiveDetector::SnapshotProductiveApp() const
         {
             ctxPtr->result = std::move(candidate);
             ctxPtr->found = true;
-            return FALSE; // top-most matching Office window found
+            return FALSE; // top-most matching productivity window found
         }
 
         return TRUE;

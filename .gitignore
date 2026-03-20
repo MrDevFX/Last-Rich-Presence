@@ -26,5 +26,12 @@ BundleArtifacts/
 *.log
 *.tmp
 
+# Local packaged extension artifact
+browser-extension.zip
+
+# Test project build output
+tests/**/bin/
+tests/**/obj/
+
 # NuGet package cache in legacy layout
 packages/

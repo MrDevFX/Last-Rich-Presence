@@ -20,6 +20,7 @@ public:
 
     // Call when media changes — handles art fetching + Discord update
     void UpdateMedia(const MediaInfo& info);
+    void ClearPresence();
     void ClearMedia();
 
     // Re-send presence with current settings (e.g., after toggle change)
@@ -30,6 +31,7 @@ public:
     void SetShowPaused(bool show);
     void SetShowAlbumArt(bool show);
     void SetShowSource(bool show);
+    void SetShowIdleStatus(bool show);
     void SetSensitiveKeywordFilter(bool enabled);
     void SetStrictBrowserPrivacy(bool enabled);
     void SetSuppressBrowserAlbumArt(bool enabled);
@@ -94,6 +96,7 @@ private:
     std::atomic<bool> m_showPaused{true};
     std::atomic<bool> m_showAlbumArt{true};
     std::atomic<bool> m_showSource{true};
+    std::atomic<bool> m_showIdleStatus{true};
     std::atomic<bool> m_sensitiveKeywordFilter{true};
     std::atomic<bool> m_strictBrowserPrivacy{false};
     std::atomic<bool> m_suppressBrowserAlbumArt{false};

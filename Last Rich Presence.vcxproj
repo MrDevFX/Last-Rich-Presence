@@ -184,16 +184,26 @@
     <ResourceCompile Include="app_icon.rc" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\core\ActivityPresenceHelpers.h" />
+    <ClInclude Include="src\core\AppEnums.h" />
     <ClInclude Include="src\core\pch.h" />
     <ClInclude Include="src\core\CreativeDetector.h" />
     <ClInclude Include="src\core\CreativePresenceManager.h" />
+    <ClInclude Include="src\core\DiagnosticsLog.h" />
     <ClInclude Include="src\core\ProductiveDetector.h" />
     <ClInclude Include="src\core\ProductivePresenceManager.h" />
+    <ClInclude Include="src\core\SettingsModels.h" />
+    <ClInclude Include="src\core\SettingsStore.h" />
+    <ClInclude Include="src\core\StartupRegistration.h" />
+    <ClInclude Include="src\core\TextUtilities.h" />
     <ClInclude Include="src\ui\App.xaml.h">
       <DependentUpon>src\ui\App.xaml</DependentUpon>
     </ClInclude>
     <ClInclude Include="src\ui\MainWindow.xaml.h">
       <DependentUpon>src\ui\MainWindow.xaml</DependentUpon>
+    </ClInclude>
+    <ClInclude Include="src\ui\SettingsDiagnosticsPanel.xaml.h">
+      <DependentUpon>src\ui\SettingsDiagnosticsPanel.xaml</DependentUpon>
     </ClInclude>
     <ClInclude Include="src\core\MediaDetector.h" />
     <ClInclude Include="src\core\DiscordRPC.h" />
@@ -202,6 +212,7 @@
   <ItemGroup>
     <ApplicationDefinition Include="src\ui\App.xaml" />
     <Page Include="src\ui\MainWindow.xaml" />
+    <Page Include="src\ui\SettingsDiagnosticsPanel.xaml" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\core\pch.cpp">
@@ -211,11 +222,16 @@
     <ClCompile Include="src\core\CreativePresenceManager.cpp" />
     <ClCompile Include="src\core\ProductiveDetector.cpp" />
     <ClCompile Include="src\core\ProductivePresenceManager.cpp" />
+    <ClCompile Include="src\core\SettingsStore.cpp" />
+    <ClCompile Include="src\core\StartupRegistration.cpp" />
     <ClCompile Include="src\ui\App.xaml.cpp">
       <DependentUpon>src\ui\App.xaml</DependentUpon>
     </ClCompile>
     <ClCompile Include="src\ui\MainWindow.xaml.cpp">
       <DependentUpon>src\ui\MainWindow.xaml</DependentUpon>
+    </ClCompile>
+    <ClCompile Include="src\ui\SettingsDiagnosticsPanel.xaml.cpp">
+      <DependentUpon>src\ui\SettingsDiagnosticsPanel.xaml</DependentUpon>
     </ClCompile>
     <ClCompile Include="src\core\MediaDetector.cpp" />
     <ClCompile Include="src\core\DiscordRPC.cpp" />
@@ -226,6 +242,10 @@
     <Midl Include="src\ui\MainWindow.idl">
       <SubType>Code</SubType>
       <DependentUpon>src\ui\MainWindow.xaml</DependentUpon>
+    </Midl>
+    <Midl Include="src\ui\SettingsDiagnosticsPanel.idl">
+      <SubType>Code</SubType>
+      <DependentUpon>src\ui\SettingsDiagnosticsPanel.xaml</DependentUpon>
     </Midl>
   </ItemGroup>
   <ItemGroup>
@@ -246,6 +266,10 @@
     <Image Include="Assets\CreativeLogos\*.jpg" />
     <Image Include="Assets\CreativeLogos\*.jpeg" />
     <Image Include="Assets\CreativeLogos\*.webp" />
+    <Image Include="Assets\ProductiveLogos\*.png" />
+    <Image Include="Assets\ProductiveLogos\*.jpg" />
+    <Image Include="Assets\ProductiveLogos\*.jpeg" />
+    <Image Include="Assets\ProductiveLogos\*.webp" />
   </ItemGroup>
   <!--
     Defining the "Msix" ProjectCapability here allows the Single-project MSIX Packaging

@@ -1,5 +1,6 @@
 #pragma once
 #include "pch.h"
+#include "AppEnums.h"
 
 #include <cstdint>
 #include <condition_variable>
@@ -14,13 +15,6 @@ struct CreativeActivityInfo
     std::wstring appName;
     std::wstring windowTitle;
     std::wstring projectHint;
-};
-
-enum class CreativeDetectionMode
-{
-    ForegroundPreferredVisibleFallback = 0,
-    ForegroundOnly = 1,
-    VisibleWindowOnly = 2
 };
 
 inline bool operator==(const CreativeActivityInfo& left, const CreativeActivityInfo& right)

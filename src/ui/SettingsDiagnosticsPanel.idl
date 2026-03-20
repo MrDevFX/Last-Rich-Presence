@@ -1,0 +1,11 @@
+namespace Last_Rich_Presence
+{
+    [default_interface]
+    runtimeclass SettingsDiagnosticsPanel : Microsoft.UI.Xaml.Controls.UserControl
+    {
+        SettingsDiagnosticsPanel();
+        event Microsoft.UI.Xaml.RoutedEventHandler ClearRequested;
+        event Microsoft.UI.Xaml.RoutedEventHandler ExportJsonRequested;
+        void SetLogText(String value);
+    }
+}
