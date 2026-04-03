@@ -30,6 +30,7 @@ public:
     void Initialize();
     void Shutdown();
     bool IsConnected() const;
+    DiscordRpcStatus GetTransportStatus() const;
 
     void UpdateProductiveActivity(const ProductiveActivityInfo& info, const ProductivePresenceOptions& options);
     void ClearProductiveActivity();

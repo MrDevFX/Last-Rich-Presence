@@ -187,6 +187,11 @@ bool PresenceManager::IsConnected() const
     return m_discord.IsConnected();
 }
 
+DiscordRpcStatus PresenceManager::GetTransportStatus() const
+{
+    return m_discord.GetStatus();
+}
+
 // --- Settings ---
 
 void PresenceManager::SetShowTimestamps(bool show) { m_showTimestamps = show; }

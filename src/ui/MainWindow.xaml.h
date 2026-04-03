@@ -1,14 +1,18 @@
 #pragma once
 
 #include "MainWindow.g.h"
+#include "ActivityLaneCoordinator.h"
 #include "AppEnums.h"
 #include "DiagnosticsLog.h"
+#include "SettingsStore.h"
 #include "MediaDetector.h"
 #include "PresenceManager.h"
 #include "CreativeDetector.h"
 #include "CreativePresenceManager.h"
 #include "ProductiveDetector.h"
 #include "ProductivePresenceManager.h"
+
+#include <vector>
 
 namespace winrt::Last_Rich_Presence::implementation
 {
@@ -147,12 +151,15 @@ namespace winrt::Last_Rich_Presence::implementation
         void RefreshDiagnosticsPanel();
         std::wstring BuildDiagnosticsSnapshotJson() const;
         std::wstring BuildSettingsSnapshotJson();
+        lrp::settings::PersistedSettings BuildPersistedSettingsSnapshot();
+        void ApplyPersistedSettingsSnapshot(const lrp::settings::PersistedSettings& settings);
+        void AppendSettingsIssues(const std::wstring& operation, const std::vector<lrp::settings::SettingsIssue>& issues);
         void UpdateThumbnail(const MediaInfo& info);
         void UpdateProductiveAppIcon(const ProductiveActivityInfo& info);
         void UpdateCreativeAppIcon(const CreativeActivityInfo& info);
         void ShowConnectionInfoBar(bool connected);
         void LoadSettings();
-        void SaveSettings();
+        lrp::settings::SettingsSaveResult SaveSettings();
         static std::wstring FormatTime(int totalSeconds);
 
         std::shared_ptr<MediaDetector> m_mediaDetector;
@@ -260,6 +267,8 @@ namespace winrt::Last_Rich_Presence::implementation
         std::wstring m_queuedPageTag;
         bool m_pageTransitionInProgress{false};
         CreativeActivityInfo m_lastCreativeAcceptedActivity;
+        lrp::ActivityLaneState m_productiveLaneState;
+        lrp::ActivityLaneState m_creativeLaneState;
         std::chrono::steady_clock::time_point m_lastPresencePushAt{};
         bool m_lastPresencePushPlaying{false};
         bool m_reduceMotionRequested{false};

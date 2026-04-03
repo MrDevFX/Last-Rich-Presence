@@ -453,7 +453,6 @@ CreativeActivityInfo CreativeDetector::SnapshotForegroundCreativeApp() const
 {
     CreativeActivityInfo info;
     auto mode = GetDetectionMode();
-
     if (mode != CreativeDetectionMode::VisibleWindowOnly &&
         TryBuildCreativeInfoForWindow(GetForegroundWindow(), info))
     {

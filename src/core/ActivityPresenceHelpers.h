@@ -9,6 +9,15 @@
 
 namespace lrp
 {
+    inline uint32_t ResolveRpcTargetPidForDetectedActivity(uint32_t detectedProcessId) noexcept
+    {
+        (void)detectedProcessId;
+        // Discord RPC expects the PID of the application connected to the RPC
+        // socket. Returning 0 lets DiscordRPC fall back to the current Last Rich
+        // Presence process ID instead of forwarding a foreign app PID.
+        return 0;
+    }
+
     inline std::wstring ClampWide(std::wstring value, size_t maxChars)
     {
         value = TrimCopy(std::move(value));

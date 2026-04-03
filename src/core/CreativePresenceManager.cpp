@@ -48,6 +48,12 @@ bool CreativePresenceManager::IsConnected() const
     return m_initialized && m_discord.IsConnected();
 }
 
+DiscordRpcStatus CreativePresenceManager::GetTransportStatus() const
+{
+    std::lock_guard lock(m_mutex);
+    return m_discord.GetStatus();
+}
+
 std::string CreativePresenceManager::WideToUtf8(const std::wstring& wide)
 {
     return lrp::WideToUtf8(wide);
@@ -137,7 +143,7 @@ void CreativePresenceManager::UpdateCreativeActivity(const CreativeActivityInfo&
         ? options.activityTypeOverride
         : 0; // Playing
     presence.playing = true;
-    presence.targetPid = info.processId;
+    presence.targetPid = lrp::ResolveRpcTargetPidForDetectedActivity(info.processId);
     presence.name = ClampWideField(appName, 64);
     presence.details = ClampWideField(details, 96);
     presence.state = ClampWideField(state, 96);

@@ -184,6 +184,7 @@
     <ResourceCompile Include="app_icon.rc" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\core\ActivityLaneCoordinator.h" />
     <ClInclude Include="src\core\ActivityPresenceHelpers.h" />
     <ClInclude Include="src\core\AppEnums.h" />
     <ClInclude Include="src\core\pch.h" />
@@ -192,6 +193,7 @@
     <ClInclude Include="src\core\DiagnosticsLog.h" />
     <ClInclude Include="src\core\ProductiveDetector.h" />
     <ClInclude Include="src\core\ProductivePresenceManager.h" />
+    <ClInclude Include="src\core\SettingsImport.h" />
     <ClInclude Include="src\core\SettingsModels.h" />
     <ClInclude Include="src\core\SettingsStore.h" />
     <ClInclude Include="src\core\StartupRegistration.h" />
@@ -234,7 +236,9 @@
       <DependentUpon>src\ui\SettingsDiagnosticsPanel.xaml</DependentUpon>
     </ClCompile>
     <ClCompile Include="src\core\MediaDetector.cpp" />
-    <ClCompile Include="src\core\DiscordRPC.cpp" />
+    <ClCompile Include="src\core\DiscordRPC.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="src\core\PresenceManager.cpp" />
     <ClCompile Include="$(GeneratedFilesDir)module.g.cpp" />
   </ItemGroup>
@@ -354,5 +358,18 @@
     </ItemGroup>
     <Error Condition="'@(VCRuntimeDlls)'==''" Text="Could not locate VC++ runtime DLLs under $(VCInstallDir)Redist\\MSVC." />
     <Copy SourceFiles="@(VCRuntimeDlls)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="DeduplicateWindowsAppSdkAutoInitializers" BeforeTargets="WarnCompileDuplicatedFilename;ClCompile">
+    <ItemGroup>
+      <_WindowsAppSdkAutoInitializer Include="@(ClCompile)"
+        Condition="'%(Filename)%(Extension)'=='WindowsAppRuntimeAutoInitializer.cpp' or '%(Filename)%(Extension)'=='UndockedRegFreeWinRT-AutoInitializer.cpp'" />
+    </ItemGroup>
+    <RemoveDuplicates Inputs="@(_WindowsAppSdkAutoInitializer)">
+      <Output TaskParameter="Filtered" ItemName="_UniqueWindowsAppSdkAutoInitializer" />
+    </RemoveDuplicates>
+    <ItemGroup Condition="'@(_WindowsAppSdkAutoInitializer)'!=''">
+      <ClCompile Remove="@(_WindowsAppSdkAutoInitializer)" />
+      <ClCompile Include="@(_UniqueWindowsAppSdkAutoInitializer)" />
+    </ItemGroup>
   </Target>
 </Project>

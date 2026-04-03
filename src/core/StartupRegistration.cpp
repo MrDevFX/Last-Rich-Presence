@@ -137,7 +137,7 @@ namespace lrp::startup
         return true;
     }
 
-    void WriteUserPreferenceBool(const wchar_t* valueName, bool value)
+    bool WriteUserPreferenceBool(const wchar_t* valueName, bool value)
     {
         HKEY settingsKey = nullptr;
         auto createResult = RegCreateKeyExW(
@@ -151,10 +151,10 @@ namespace lrp::startup
             &settingsKey,
             nullptr);
         if (createResult != ERROR_SUCCESS)
-            return;
+            return false;
 
         DWORD valueData = value ? 1u : 0u;
-        RegSetValueExW(
+        auto setResult = RegSetValueExW(
             settingsKey,
             valueName,
             0,
@@ -163,5 +163,6 @@ namespace lrp::startup
             sizeof(valueData));
 
         RegCloseKey(settingsKey);
+        return setResult == ERROR_SUCCESS;
     }
 }

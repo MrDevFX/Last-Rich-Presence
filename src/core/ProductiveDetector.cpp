@@ -316,7 +316,6 @@ ProductiveActivityInfo ProductiveDetector::SnapshotProductiveApp() const
 {
     ProductiveActivityInfo info;
     auto mode = GetDetectionMode();
-
     if (mode != ProductiveDetectionMode::VisibleWindowOnly &&
         TryBuildProductiveInfoForWindow(GetForegroundWindow(), info))
     {

@@ -50,6 +50,47 @@ function Invoke-Step {
     & $Action
 }
 
+function Test-BuildOutputLocked {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Configuration,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Platform
+    )
+
+    $candidateExe = Join-Path $RepoRoot "$Platform\$Configuration\Last Rich Presence\Last_Rich_Presence.exe"
+    if (-not (Test-Path $candidateExe)) {
+        return
+    }
+
+    $resolvedCandidate = (Resolve-Path $candidateExe).Path
+    $runningInstances = @(
+        Get-Process -Name Last_Rich_Presence -ErrorAction SilentlyContinue |
+            Where-Object {
+                try {
+                    $_.Path -and ([System.StringComparer]::OrdinalIgnoreCase.Equals($_.Path, $resolvedCandidate))
+                }
+                catch {
+                    $false
+                }
+            }
+    )
+
+    if ($runningInstances.Count -eq 0) {
+        return
+    }
+
+    $details = $runningInstances | ForEach-Object {
+        "$($_.ProcessName) (PID $($_.Id)) -> $($_.Path)"
+    }
+
+    throw "Build output is locked by a running app instance:`n$($details -join [Environment]::NewLine)`nStop the running app and rerun verify.ps1."
+}
+
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $solutionPath = Join-Path $repoRoot "Last Rich Presence.sln"
 
@@ -63,6 +104,8 @@ Write-Host "Repo: $repoRoot"
 Write-Host "MSBuild: $msbuildPath"
 Write-Host "Configuration: $Configuration"
 Write-Host "Platform: $Platform"
+
+Test-BuildOutputLocked -RepoRoot $repoRoot -Configuration $Configuration -Platform $Platform
 
 Invoke-Step -Name "Build solution" -Action {
     & $msbuildPath $solutionPath -t:Build "-p:Configuration=$Configuration" "-p:Platform=$Platform" -m
@@ -83,7 +126,7 @@ Invoke-Step -Name "Extension JS syntax checks" -Action {
         throw "Node.js is required for JS checks but 'node' was not found on PATH."
     }
 
-    $jsFiles = @(Get-ChildItem -Path $extensionDir -Filter *.js -File | Sort-Object Name)
+    $jsFiles = @(Get-ChildItem -Path $extensionDir -Recurse -Filter *.js -File | Sort-Object FullName)
     if ($jsFiles.Count -eq 0) {
         Write-Host "No JS files found, skipping JS checks."
         return

@@ -11,5 +11,5 @@ namespace lrp::startup
     bool IsRunStartupEnabledForCurrentExecutable();
     bool SetRunStartupEnabledForCurrentExecutable(bool enabled, bool startMinimizedToTray);
     bool TryReadUserPreferenceBool(const wchar_t* valueName, bool& valueOut);
-    void WriteUserPreferenceBool(const wchar_t* valueName, bool value);
+    bool WriteUserPreferenceBool(const wchar_t* valueName, bool value);
 }

@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "MainWindow.xaml.h"
+#include "SettingsImport.h"
 #include "SettingsModels.h"
 #include "SettingsStore.h"
 #include "StartupRegistration.h"
@@ -305,9 +306,9 @@ namespace
         return lrp::startup::TryReadUserPreferenceBool(valueName, valueOut);
     }
 
-    void WriteUserPreferenceBool(const wchar_t* valueName, bool value)
+    bool WriteUserPreferenceBool(const wchar_t* valueName, bool value)
     {
-        lrp::startup::WriteUserPreferenceBool(valueName, value);
+        return lrp::startup::WriteUserPreferenceBool(valueName, value);
     }
 
     std::wstring NormalizeForMatch(const std::wstring& value)
@@ -318,6 +319,118 @@ namespace
     std::vector<std::wstring> ParseBlockedTerms(const std::wstring& raw)
     {
         return lrp::ParseDelimitedTerms(raw);
+    }
+
+    struct BoolValueGuard
+    {
+        BoolValueGuard(bool& target, bool replacement)
+            : m_target(target)
+            , m_original(target)
+        {
+            m_target = replacement;
+        }
+
+        ~BoolValueGuard()
+        {
+            m_target = m_original;
+        }
+
+    private:
+        bool& m_target;
+        bool m_original;
+    };
+
+    std::wstring NarrowToWide(const std::string& value)
+    {
+        return std::wstring(winrt::to_hstring(value).c_str());
+    }
+
+    JsonObject BuildDiscordStatusJson(const DiscordRpcStatus& status)
+    {
+        JsonObject json;
+        json.Insert(L"connected", JsonValue::CreateBooleanValue(status.connected));
+        json.Insert(L"running", JsonValue::CreateBooleanValue(status.running));
+        json.Insert(L"lastResult", JsonValue::CreateStringValue(
+            winrt::to_hstring(DiscordRPC::TransportResultLabel(status.lastResult))));
+        json.Insert(L"retryCount", JsonValue::CreateNumberValue(static_cast<double>(status.retryCount)));
+        json.Insert(L"lastSuccessfulHandshakeUnixSeconds",
+            JsonValue::CreateNumberValue(static_cast<double>(status.lastSuccessfulHandshakeUnixSeconds)));
+        json.Insert(L"lastDisconnectUnixSeconds",
+            JsonValue::CreateNumberValue(static_cast<double>(status.lastDisconnectUnixSeconds)));
+        json.Insert(L"lastErrorDetail", JsonValue::CreateStringValue(NarrowToWide(status.lastErrorDetail)));
+        return json;
+    }
+
+    std::wstring JoinIssueMessages(const std::vector<lrp::settings::SettingsIssue>& issues)
+    {
+        std::wstring message;
+        for (size_t index = 0; index < issues.size(); ++index)
+        {
+            if (index > 0)
+                message += L"; ";
+
+            message += issues[index].key + L": " + issues[index].message;
+        }
+
+        return message;
+    }
+
+    lrp::settings::ImportedSettingMap BuildImportedSettingsMap(const JsonObject& root)
+    {
+        lrp::settings::ImportedSettingMap values;
+        for (const auto& pair : root)
+        {
+            const auto key = std::wstring(pair.Key().c_str());
+            const auto value = pair.Value();
+            switch (value.ValueType())
+            {
+            case JsonValueType::Boolean:
+                values[key] = value.GetBoolean();
+                break;
+            case JsonValueType::Number:
+                values[key] = value.GetNumber();
+                break;
+            case JsonValueType::String:
+                values[key] = std::wstring(value.GetString().c_str());
+                break;
+            default:
+                values[key] = std::monostate{};
+                break;
+            }
+        }
+
+        return values;
+    }
+
+    std::wstring BuildProductiveLaneSignature(
+        const ProductiveActivityInfo& info,
+        const ProductivePresenceOptions& options)
+    {
+        return info.appKey + L"|" +
+            info.appName + L"|" +
+            (options.showProjectName ? info.projectHint : std::wstring{}) + L"|" +
+            std::to_wstring(options.activityTypeOverride);
+    }
+
+    std::wstring BuildCreativeLaneSignature(
+        const CreativeActivityInfo& info,
+        const CreativePresenceOptions& options)
+    {
+        return info.appKey + L"|" +
+            info.appName + L"|" +
+            (options.showProjectName ? info.projectHint : std::wstring{}) + L"|" +
+            (options.showWindowTitle ? info.windowTitle : std::wstring{}) + L"|" +
+            std::to_wstring(static_cast<int>(options.privacyMode)) + L"|" +
+            std::to_wstring(options.activityTypeOverride);
+    }
+
+    std::wstring BuildLaneTransitionLogMessage(
+        const std::wstring& laneLabel,
+        const lrp::ActivityLaneTransition& transition)
+    {
+        return laneLabel + L" lane " +
+            lrp::ToSettingString(transition.action) +
+            L" (" + lrp::ToSettingString(transition.reason) + L")";
     }
 
     bool IsBlockedMessengerMedia(const MediaInfo& info)
@@ -3263,11 +3376,8 @@ namespace winrt::Last_Rich_Presence::implementation
                 m_productivePresence->ClearProductiveActivity();
                 m_productivePresence->Shutdown();
                 m_productivePresenceRunning = false;
+                lrp::ResetActivityLaneState(m_productiveLaneState);
                 AppendDiagnosticLog(L"INFO", L"productive", L"Productive Discord RPC stopped");
-            }
-            else if (!m_enabled && m_productivePresenceRunning)
-            {
-                m_productivePresence->ClearProductiveActivity();
             }
         }
 
@@ -3279,6 +3389,7 @@ namespace winrt::Last_Rich_Presence::implementation
         {
             m_productiveDetector->Stop();
             m_lastProductiveActivity = {};
+            lrp::ResetActivityLaneState(m_productiveLaneState);
         }
 
         SyncProductiveRpcOutput();
@@ -3289,7 +3400,26 @@ namespace winrt::Last_Rich_Presence::implementation
         if (m_isShuttingDown || !m_productivePresence)
             return;
 
-        if (!m_productivePresenceRunning && m_enabled && m_productiveEnabled)
+        ProductivePresenceOptions options{};
+        options.privacyMode = ProductivePresencePrivacyMode::Normal;
+        options.showProjectName = m_productiveShowProjectName;
+        options.showWindowTitle = false;
+        options.activityTypeOverride = m_productiveActivityTypeOverride;
+
+        const bool appEnabled = !m_lastProductiveActivity.active || IsProductiveAppEnabled(m_lastProductiveActivity);
+        auto transition = lrp::ResolveActivityLaneTransition(
+            m_productiveLaneState,
+            m_enabled,
+            m_productiveEnabled,
+            m_lastProductiveActivity.active && appEnabled,
+            false,
+            m_lastProductiveActivity.active && !appEnabled,
+            false,
+            false,
+            BuildProductiveLaneSignature(m_lastProductiveActivity, options),
+            lrp::ActivityLaneReason::AppClosed);
+
+        if (transition.shouldEnsureRunning && !m_productivePresenceRunning)
         {
             m_productivePresence->Initialize();
             m_productivePresenceRunning = true;
@@ -3297,26 +3427,29 @@ namespace winrt::Last_Rich_Presence::implementation
         }
 
         if (!m_productivePresenceRunning)
-            return;
-
-        if (!m_enabled || !m_productiveEnabled || !m_lastProductiveActivity.active)
         {
-            m_productivePresence->ClearProductiveActivity();
+            if (!transition.duplicate)
+            {
+                AppendDiagnosticLog(L"INFO", L"productive", BuildLaneTransitionLogMessage(L"Productivity", transition));
+                lrp::CommitActivityLaneTransition(m_productiveLaneState, transition);
+            }
             return;
         }
 
-        if (!IsProductiveAppEnabled(m_lastProductiveActivity))
+        if (transition.duplicate)
+            return;
+
+        if (lrp::IsPublishAction(transition.action))
+        {
+            m_productivePresence->UpdateProductiveActivity(m_lastProductiveActivity, options);
+        }
+        else
         {
             m_productivePresence->ClearProductiveActivity();
-            return;
         }
 
-        ProductivePresenceOptions options{};
-        options.privacyMode = ProductivePresencePrivacyMode::Normal;
-        options.showProjectName = m_productiveShowProjectName;
-        options.showWindowTitle = false;
-        options.activityTypeOverride = m_productiveActivityTypeOverride;
-        m_productivePresence->UpdateProductiveActivity(m_lastProductiveActivity, options);
+        AppendDiagnosticLog(L"INFO", L"productive", BuildLaneTransitionLogMessage(L"Productivity", transition));
+        lrp::CommitActivityLaneTransition(m_productiveLaneState, transition);
     }
 
     void MainWindow::SyncProductiveSettingsFromControls()
@@ -3467,11 +3600,8 @@ namespace winrt::Last_Rich_Presence::implementation
                 m_creativePresence->ClearCreativeActivity();
                 m_creativePresence->Shutdown();
                 m_creativePresenceRunning = false;
+                lrp::ResetActivityLaneState(m_creativeLaneState);
                 AppendDiagnosticLog(L"INFO", L"creative", L"Creativity Discord RPC stopped");
-            }
-            else if (!m_enabled && m_creativePresenceRunning)
-            {
-                m_creativePresence->ClearCreativeActivity();
             }
         }
 
@@ -3485,6 +3615,7 @@ namespace winrt::Last_Rich_Presence::implementation
             m_lastCreativeActivity = {};
             m_lastCreativeAcceptedActivity = {};
             m_lastCreativeActiveSeenAt = {};
+            lrp::ResetActivityLaneState(m_creativeLaneState);
         }
 
         SyncCreativeRpcOutput();
@@ -3563,47 +3694,20 @@ namespace winrt::Last_Rich_Presence::implementation
         if (m_isShuttingDown || !m_creativePresence)
             return;
 
-        // Self-heal: if detector callbacks are active but the creative RPC worker
-        // is not running, bring it back before evaluating publish/clear rules.
-        if (!m_creativePresenceRunning && m_enabled && m_creativeEnabled)
-        {
-            m_creativePresence->Initialize();
-            m_creativePresenceRunning = true;
-            AppendDiagnosticLog(L"INFO", L"creative", L"Creativity Discord RPC auto-restarted");
-        }
-
-        if (!m_creativePresenceRunning)
-            return;
-
-        if (!m_enabled || !m_creativeEnabled || m_creativePrivacyMode == CreativePrivacyMode::Private)
-        {
-            m_creativePresence->ClearCreativeActivity();
-            return;
-        }
-
         CreativeActivityInfo effective{};
         bool heldActivity = false;
-        if (!TryGetEffectiveCreativeActivityForRpc(effective, heldActivity))
-        {
-            m_creativePresence->ClearCreativeActivity();
-            return;
-        }
-
+        bool hasEffectiveActivity = TryGetEffectiveCreativeActivityForRpc(effective, heldActivity);
+        bool filteredBySettings = m_lastCreativeActivity.active && !IsCreativeAppEnabled(m_lastCreativeActivity) && !heldActivity;
         bool mediaActive = !m_lastMedia.title.empty() && m_lastMedia.isPlaying;
         const bool separateCreativeApp = UsesSeparateCreativeDiscordApp();
-        if (!separateCreativeApp && m_creativePriority == CreativePriorityMode::PreferMedia && mediaActive)
-        {
-            m_creativePresence->ClearCreativeActivity();
-            return;
-        }
-
-        // If both pipelines share one Discord app ID, suppress held activity in Auto
-        // mode when media is active. With separate app IDs, allow both activities.
-        if (!separateCreativeApp && m_creativePriority == CreativePriorityMode::Auto && mediaActive && heldActivity)
-        {
-            m_creativePresence->ClearCreativeActivity();
-            return;
-        }
+        const bool suppressedByPriority =
+            hasEffectiveActivity &&
+            !separateCreativeApp &&
+            ((m_creativePriority == CreativePriorityMode::PreferMedia && mediaActive) ||
+             (m_creativePriority == CreativePriorityMode::Auto && mediaActive && heldActivity));
+        const bool hiddenByPrivateMode =
+            m_creativePrivacyMode == CreativePrivacyMode::Private &&
+            (m_lastCreativeActivity.active || m_lastCreativeAcceptedActivity.active);
 
         CreativePresenceOptions options{};
         options.showProjectName = m_creativeShowProjectName;
@@ -3623,7 +3727,49 @@ namespace winrt::Last_Rich_Presence::implementation
             break;
         }
 
-        m_creativePresence->UpdateCreativeActivity(effective, options);
+        auto transition = lrp::ResolveActivityLaneTransition(
+            m_creativeLaneState,
+            m_enabled,
+            m_creativeEnabled,
+            hasEffectiveActivity && !suppressedByPriority && !hiddenByPrivateMode && !filteredBySettings,
+            heldActivity,
+            filteredBySettings,
+            hiddenByPrivateMode,
+            suppressedByPriority,
+            BuildCreativeLaneSignature(effective, options),
+            lrp::ActivityLaneReason::DetectorIdle);
+
+        if (transition.shouldEnsureRunning && !m_creativePresenceRunning)
+        {
+            m_creativePresence->Initialize();
+            m_creativePresenceRunning = true;
+            AppendDiagnosticLog(L"INFO", L"creative", L"Creativity Discord RPC auto-restarted");
+        }
+
+        if (!m_creativePresenceRunning)
+        {
+            if (!transition.duplicate)
+            {
+                AppendDiagnosticLog(L"INFO", L"creative", BuildLaneTransitionLogMessage(L"Creativity", transition));
+                lrp::CommitActivityLaneTransition(m_creativeLaneState, transition);
+            }
+            return;
+        }
+
+        if (transition.duplicate)
+            return;
+
+        if (lrp::IsPublishAction(transition.action))
+        {
+            m_creativePresence->UpdateCreativeActivity(effective, options);
+        }
+        else
+        {
+            m_creativePresence->ClearCreativeActivity();
+        }
+
+        AppendDiagnosticLog(L"INFO", L"creative", BuildLaneTransitionLogMessage(L"Creativity", transition));
+        lrp::CommitActivityLaneTransition(m_creativeLaneState, transition);
     }
 
     void MainWindow::OnCreativeToggleChanged(IInspectable const&, RoutedEventArgs const&)
@@ -3825,138 +3971,33 @@ namespace winrt::Last_Rich_Presence::implementation
                 AppendDiagnosticLog(L"WARN", L"settings", L"settings-export.json is not valid JSON");
                 return;
             }
+            auto imported = lrp::settings::ParseImportedSettings(
+                BuildImportedSettingsMap(root),
+                BuildPersistedSettingsSnapshot());
 
-            auto readBool = [&](const wchar_t* key, bool fallback)
             {
-                if (!root.HasKey(key)) return fallback;
-                auto value = root.Lookup(key);
-                if (value.ValueType() == JsonValueType::Boolean) return value.GetBoolean();
-                if (value.ValueType() == JsonValueType::Number) return value.GetNumber() != 0.0;
-                return fallback;
-            };
-
-            auto readString = [&](const wchar_t* key, const std::wstring& fallback)
-            {
-                if (!root.HasKey(key)) return fallback;
-                auto value = root.Lookup(key);
-                if (value.ValueType() == JsonValueType::String)
-                    return std::wstring(value.GetString().c_str());
-                return fallback;
-            };
-
-            bool initBefore = m_isInitializing;
-            m_isInitializing = true;
-
-            TimestampToggle().IsOn(readBool(L"ShowTimestamps", TimestampToggle().IsOn()));
-            SourceToggle().IsOn(readBool(L"ShowSourceApp", SourceToggle().IsOn()));
-            SourceDebugToggle().IsOn(readBool(L"SourceDebugMode", SourceDebugToggle().IsOn()));
-            PausedToggle().IsOn(readBool(L"ShowPaused", PausedToggle().IsOn()));
-            AlbumArtToggle().IsOn(readBool(L"ShowAlbumArt", AlbumArtToggle().IsOn()));
-            DefaultIdleStatusToggle().IsOn(readBool(L"ShowDefaultIdleStatus", DefaultIdleStatusToggle().IsOn()));
-
-            EnableToggle().IsOn(readBool(L"RichPresenceEnabled", EnableToggle().IsOn()));
-            CloseToTrayToggle().IsOn(readBool(L"CloseToTrayOnClose", CloseToTrayToggle().IsOn()));
-            LaunchOnStartupToggle().IsOn(readBool(L"LaunchOnStartup", LaunchOnStartupToggle().IsOn()));
-            StartMinimizedToggle().IsOn(readBool(L"StartMinimizedToTray", StartMinimizedToggle().IsOn()));
-            TrayLeftClickToggle().IsOn(readBool(L"TrayLeftClickToggles", TrayLeftClickToggle().IsOn()));
-
-            SensitiveFilterToggle().IsOn(readBool(L"SensitiveKeywordFilter", SensitiveFilterToggle().IsOn()));
-            StrictBrowserPrivacyToggle().IsOn(readBool(L"StrictBrowserPrivacy", StrictBrowserPrivacyToggle().IsOn()));
-            SuppressBrowserArtToggle().IsOn(readBool(L"SuppressBrowserAlbumArt", SuppressBrowserArtToggle().IsOn()));
-            ThemeModeCombo().SelectedIndex(ThemeModeToComboIndex(
-                ParseThemeMode(readString(L"ThemeMode", ToSettingString(AppThemeMode::FollowSystem)))));
-
-            m_blockedAppSiteTermsRaw = readString(L"BlockedAppSiteTerms", BlockedAppSitesBox().Text().c_str());
-            BlockedAppSitesBox().Text(m_blockedAppSiteTermsRaw);
-            MediaActivityTypeCombo().SelectedIndex(ActivityTypeOverrideToComboIndex(
-                ParseActivityTypeOverride(readString(L"MediaActivityType", L"auto"))));
-            CreativeActivityTypeCombo().SelectedIndex(ActivityTypeOverrideToComboIndex(
-                ParseActivityTypeOverride(readString(L"CreativeActivityType", L"auto"))));
-            ProductiveActivityTypeCombo().SelectedIndex(ActivityTypeOverrideToComboIndex(
-                ParseActivityTypeOverride(readString(L"ProductiveActivityType", L"auto"))));
-
-            ProductiveEnableToggle().IsOn(readBool(L"ProductiveEnabled", ProductiveEnableToggle().IsOn()));
-            ProductiveDetectionModeCombo().SelectedIndex(ProductiveDetectionModeToComboIndex(
-                ParseProductiveDetectionMode(readString(L"ProductiveDetectionMode", ToSettingString(ProductiveDetectionMode::ForegroundPreferredVisibleFallback)))));
-            ProductiveShowProjectToggle().IsOn(readBool(L"ProductiveShowProjectName", ProductiveShowProjectToggle().IsOn()));
-            ProductiveAppWordCheck().IsChecked(readBool(L"ProductiveAppWordEnabled", true));
-            ProductiveAppExcelCheck().IsChecked(readBool(L"ProductiveAppExcelEnabled", true));
-            ProductiveAppPowerPointCheck().IsChecked(readBool(L"ProductiveAppPowerPointEnabled", true));
-            ProductiveAppOneNoteCheck().IsChecked(readBool(L"ProductiveAppOneNoteEnabled", true));
-            ProductiveAppAccessCheck().IsChecked(readBool(L"ProductiveAppAccessEnabled", true));
-            ProductiveAppPublisherCheck().IsChecked(readBool(L"ProductiveAppPublisherEnabled", true));
-            ProductiveAppVisioCheck().IsChecked(readBool(L"ProductiveAppVisioEnabled", true));
-            ProductiveAppProjectCheck().IsChecked(readBool(L"ProductiveAppProjectEnabled", true));
-            ProductiveAppCodexCheck().IsChecked(readBool(L"ProductiveAppCodexEnabled", true));
-            CreativeEnableToggle().IsOn(readBool(L"CreativeEnabled", CreativeEnableToggle().IsOn()));
-            CreativePriorityCombo().SelectedIndex(CreativePriorityModeToComboIndex(
-                ParseCreativePriorityMode(readString(L"CreativePriority", ToSettingString(CreativePriorityMode::Auto)))));
-            CreativeDetectionModeCombo().SelectedIndex(CreativeDetectionModeToComboIndex(
-                ParseCreativeDetectionMode(readString(L"CreativeDetectionMode", ToSettingString(CreativeDetectionMode::ForegroundPreferredVisibleFallback)))));
-            CreativeShowProjectToggle().IsOn(readBool(L"CreativeShowProjectName", CreativeShowProjectToggle().IsOn()));
-            CreativeShowWindowTitleToggle().IsOn(readBool(L"CreativeShowWindowTitle", CreativeShowWindowTitleToggle().IsOn()));
-            CreativeAppPhotoshopCheck().IsChecked(readBool(L"CreativeAppPhotoshopEnabled", true));
-            CreativeAppIllustratorCheck().IsChecked(readBool(L"CreativeAppIllustratorEnabled", true));
-            CreativeAppPremiereCheck().IsChecked(readBool(L"CreativeAppPremiereEnabled", true));
-            CreativeAppAfterEffectsCheck().IsChecked(readBool(L"CreativeAppAfterEffectsEnabled", true));
-            CreativeAppInDesignCheck().IsChecked(readBool(L"CreativeAppInDesignEnabled", true));
-            CreativeAppAuditionCheck().IsChecked(readBool(L"CreativeAppAuditionEnabled", true));
-            CreativeAppMediaEncoderCheck().IsChecked(readBool(L"CreativeAppMediaEncoderEnabled", true));
-            CreativeAppLightroomCheck().IsChecked(readBool(L"CreativeAppLightroomEnabled", true));
-            CreativeAppLightroomClassicCheck().IsChecked(readBool(L"CreativeAppLightroomClassicEnabled", true));
-            CreativeAppInCopyCheck().IsChecked(readBool(L"CreativeAppInCopyEnabled", true));
-            CreativeAppDreamweaverCheck().IsChecked(readBool(L"CreativeAppDreamweaverEnabled", true));
-            CreativeAppAnimateCheck().IsChecked(readBool(L"CreativeAppAnimateEnabled", true));
-            CreativeAppXdCheck().IsChecked(readBool(L"CreativeAppXdEnabled", true));
-            CreativeAppBridgeCheck().IsChecked(readBool(L"CreativeAppBridgeEnabled", true));
-            CreativeAppCharacterAnimatorCheck().IsChecked(readBool(L"CreativeAppCharacterAnimatorEnabled", true));
-            CreativeAppFrescoCheck().IsChecked(readBool(L"CreativeAppFrescoEnabled", true));
-            CreativeAppDimensionCheck().IsChecked(readBool(L"CreativeAppDimensionEnabled", true));
-            CreativeAppSubstanceCheck().IsChecked(readBool(L"CreativeAppSubstanceEnabled", true));
-            CreativeAppAcrobatCheck().IsChecked(readBool(L"CreativeAppAcrobatEnabled", true));
-            CreativeAppOtherAdobeCheck().IsChecked(readBool(L"CreativeAppOtherAdobeEnabled", true));
-            CreativePrivacyCombo().SelectedIndex(CreativePrivacyModeToComboIndex(
-                ParseCreativePrivacyMode(readString(L"CreativePrivacyMode", ToSettingString(CreativePrivacyMode::Normal)))));
-            CreativeIdleBehaviorCombo().SelectedIndex(CreativeIdleBehaviorToComboIndex(
-                ParseCreativeIdleBehavior(readString(L"CreativeIdleBehavior", ToSettingString(CreativeIdleBehavior::HoldLast5Seconds)))));
-
-            m_sourceDebugMode = SourceDebugToggle().IsOn();
-            m_enabled = EnableToggle().IsOn();
-            m_closeToTrayOnClose = CloseToTrayToggle().IsOn();
-            m_launchOnStartup = LaunchOnStartupToggle().IsOn();
-            m_startMinimizedToTray = StartMinimizedToggle().IsOn();
-            m_trayLeftClickToggles = TrayLeftClickToggle().IsOn();
-            m_sensitiveKeywordFilter = SensitiveFilterToggle().IsOn();
-            m_strictBrowserPrivacy = StrictBrowserPrivacyToggle().IsOn();
-            m_suppressBrowserAlbumArt = SuppressBrowserArtToggle().IsOn();
-            m_showDefaultIdleStatus = DefaultIdleStatusToggle().IsOn();
-            m_themeMode = ThemeModeFromComboIndex(ThemeModeCombo().SelectedIndex());
-            SyncActivityTypeOverridesFromControls();
-            ApplyActivityTypeOverrides();
-
-            m_presence->SetShowTimestamps(TimestampToggle().IsOn());
-            m_presence->SetShowSource(SourceToggle().IsOn());
-            m_presence->SetShowPaused(PausedToggle().IsOn());
-            m_presence->SetShowAlbumArt(AlbumArtToggle().IsOn());
-            m_presence->SetShowIdleStatus(m_showDefaultIdleStatus);
-            m_presence->SetSensitiveKeywordFilter(m_sensitiveKeywordFilter);
-            m_presence->SetStrictBrowserPrivacy(m_strictBrowserPrivacy);
-            m_presence->SetSuppressBrowserAlbumArt(m_suppressBrowserAlbumArt);
-            m_presence->SetBlockedAppSiteTerms(ParseBlockedTerms(m_blockedAppSiteTermsRaw));
-            SyncProductiveSettingsFromControls();
-            SyncCreativeSettingsFromControls();
-
-            m_isInitializing = initBefore;
-            ApplyThemeMode();
+                BoolValueGuard initializingGuard(m_isInitializing, true);
+                ApplyPersistedSettingsSnapshot(imported.settings);
+                SyncProductiveSettingsFromControls();
+                SyncCreativeSettingsFromControls();
+            }
 
             ApplyLaunchOnStartupState(m_launchOnStartup, false);
             ApplyProductiveRuntimeState();
             ApplyCreativeDetectorRuntimeState();
-
-            SaveSettings();
+            UpdateProductivePreview(m_lastProductiveActivity);
+            RefreshCreativePreviewFromCurrentState();
             UpdateSourceBadge(m_lastMedia);
             ApplyGlobalEnableRuntimeState();
-            AppendDiagnosticLog(L"INFO", L"settings", L"Imported settings from " + inputPath.wstring());
+            auto saveResult = SaveSettings();
+            AppendSettingsIssues(L"Import settings", imported.issues);
+            const bool importHasWarnings = !imported.issues.empty() || !saveResult.issues.empty();
+            AppendDiagnosticLog(
+                importHasWarnings ? L"WARN" : L"INFO",
+                L"settings",
+                importHasWarnings
+                    ? L"Imported settings from " + inputPath.wstring() + L" with warnings"
+                    : L"Imported settings from " + inputPath.wstring());
         }
         catch (...)
         {
@@ -4331,7 +4372,6 @@ namespace winrt::Last_Rich_Presence::implementation
         if (m_isShuttingDown)
             return;
 
-        bool changed = (info != m_lastCreativeActivity);
         m_lastCreativeActivity = info;
 
         if (m_creativeEnabled && info.active && IsCreativeAppEnabled(info))
@@ -4342,55 +4382,7 @@ namespace winrt::Last_Rich_Presence::implementation
 
         UpdateCreativePreview(info);
         UpdateHomeCreativePreview();
-
-        if (m_enabled && m_creativeEnabled && m_creativePresence && !m_creativePresenceRunning)
-        {
-            m_creativePresence->Initialize();
-            m_creativePresenceRunning = true;
-            AppendDiagnosticLog(L"INFO", L"creative", L"Creativity Discord RPC started from detector activity");
-        }
-
         SyncCreativeRpcOutput();
-
-        if (!changed)
-            return;
-
-        if (!m_creativeEnabled)
-            return;
-
-        if (!info.active)
-        {
-            AppendDiagnosticLog(L"INFO", L"creative", L"No Adobe creativity app detected");
-            return;
-        }
-
-        if (!IsCreativeAppEnabled(info))
-        {
-            std::wstring message = L"Filtered " + (info.appName.empty() ? std::wstring(L"Adobe creativity app") : info.appName);
-            if (!info.appKey.empty())
-                message += L" [" + info.appKey + L"]";
-            message += L" by Creativity per-app settings";
-            AppendDiagnosticLog(L"INFO", L"creative", message);
-            return;
-        }
-
-        if (m_creativePrivacyMode == CreativePrivacyMode::Private)
-        {
-            AppendDiagnosticLog(L"INFO", L"creative", L"Creativity activity detected (hidden by private mode)");
-            return;
-        }
-
-        std::wstring message = L"Detected " + info.appName;
-        if (!info.appKey.empty())
-            message += L" [" + info.appKey + L"]";
-        if (m_creativePrivacyMode == CreativePrivacyMode::Normal)
-        {
-            if (!info.projectHint.empty())
-                message += L", project=" + info.projectHint;
-            if (!info.windowTitle.empty())
-                message += L", window=" + info.windowTitle;
-        }
-        AppendDiagnosticLog(L"INFO", L"creative", message);
     }
 
     void MainWindow::OnProductiveActivityChanged(const ProductiveActivityInfo& info)
@@ -4398,46 +4390,10 @@ namespace winrt::Last_Rich_Presence::implementation
         if (m_isShuttingDown)
             return;
 
-        bool changed = (info != m_lastProductiveActivity);
         m_lastProductiveActivity = info;
         UpdateProductivePreview(info);
 
-        if (m_enabled && m_productiveEnabled && m_productivePresence && !m_productivePresenceRunning)
-        {
-            m_productivePresence->Initialize();
-            m_productivePresenceRunning = true;
-            AppendDiagnosticLog(L"INFO", L"productive", L"Productive Discord RPC started from detector activity");
-        }
-
         SyncProductiveRpcOutput();
-
-        if (!changed || !m_productiveEnabled)
-            return;
-
-        if (!info.active)
-        {
-            AppendDiagnosticLog(L"INFO", L"productive", L"No supported productive app detected");
-            return;
-        }
-
-        if (!IsProductiveAppEnabled(info))
-        {
-            std::wstring message = L"Filtered " + (info.appName.empty() ? std::wstring(L"Office app") : info.appName);
-            if (!info.appKey.empty())
-                message += L" [" + info.appKey + L"]";
-            message += L" by Productivity per-app settings";
-            AppendDiagnosticLog(L"INFO", L"productive", message);
-            return;
-        }
-
-        std::wstring message = L"Detected " + info.appName;
-        if (!info.appKey.empty())
-            message += L" [" + info.appKey + L"]";
-        if (!info.projectHint.empty())
-            message += L", project=" + info.projectHint;
-        if (!info.windowTitle.empty())
-            message += L", window=" + info.windowTitle;
-        AppendDiagnosticLog(L"INFO", L"productive", message);
     }
 
     void MainWindow::RefreshMediaPresenceOutput()
@@ -5851,6 +5807,28 @@ namespace winrt::Last_Rich_Presence::implementation
         }
         root.Insert(L"bridge", bridge);
 
+        JsonObject discord;
+        discord.Insert(L"media", BuildDiscordStatusJson(m_presence ? m_presence->GetTransportStatus() : DiscordRpcStatus{}));
+        discord.Insert(L"productive", BuildDiscordStatusJson(
+            m_productivePresence ? m_productivePresence->GetTransportStatus() : DiscordRpcStatus{}));
+        discord.Insert(L"creative", BuildDiscordStatusJson(
+            m_creativePresence ? m_creativePresence->GetTransportStatus() : DiscordRpcStatus{}));
+        root.Insert(L"discord", discord);
+
+        JsonObject lanes;
+        JsonObject productiveLane;
+        productiveLane.Insert(L"lastAction", JsonValue::CreateStringValue(lrp::ToSettingString(m_productiveLaneState.lastAction)));
+        productiveLane.Insert(L"lastReason", JsonValue::CreateStringValue(lrp::ToSettingString(m_productiveLaneState.lastReason)));
+        productiveLane.Insert(L"lastDecisionKey", JsonValue::CreateStringValue(m_productiveLaneState.lastDecisionKey));
+        lanes.Insert(L"productive", productiveLane);
+
+        JsonObject creativeLane;
+        creativeLane.Insert(L"lastAction", JsonValue::CreateStringValue(lrp::ToSettingString(m_creativeLaneState.lastAction)));
+        creativeLane.Insert(L"lastReason", JsonValue::CreateStringValue(lrp::ToSettingString(m_creativeLaneState.lastReason)));
+        creativeLane.Insert(L"lastDecisionKey", JsonValue::CreateStringValue(m_creativeLaneState.lastDecisionKey));
+        lanes.Insert(L"creative", creativeLane);
+        root.Insert(L"lanes", lanes);
+
         JsonArray lines;
         for (const auto& line : m_diagnosticLog.Lines())
             lines.Append(JsonValue::CreateStringValue(line));
@@ -6733,129 +6711,7 @@ namespace winrt::Last_Rich_Presence::implementation
     // Settings persistence
     // =====================================================================
 
-    void MainWindow::LoadSettings()
-    {
-        auto settings = lrp::settings::LoadPersistedSettings();
-
-        m_enabled = settings.behavior.richPresenceEnabled;
-        EnableToggle().IsOn(m_enabled);
-
-        TimestampToggle().IsOn(settings.media.showTimestamps);
-        m_presence->SetShowTimestamps(settings.media.showTimestamps);
-
-        SourceToggle().IsOn(settings.media.showSource);
-        m_presence->SetShowSource(settings.media.showSource);
-
-        m_sourceDebugMode = settings.media.sourceDebugMode;
-        SourceDebugToggle().IsOn(m_sourceDebugMode);
-
-        PausedToggle().IsOn(settings.media.showPaused);
-        m_presence->SetShowPaused(settings.media.showPaused);
-
-        AlbumArtToggle().IsOn(settings.media.showAlbumArt);
-        m_presence->SetShowAlbumArt(settings.media.showAlbumArt);
-
-        m_showDefaultIdleStatus = settings.media.showDefaultIdleStatus;
-        DefaultIdleStatusToggle().IsOn(m_showDefaultIdleStatus);
-        m_presence->SetShowIdleStatus(m_showDefaultIdleStatus);
-
-        m_closeToTrayOnClose = settings.behavior.closeToTrayOnClose;
-        CloseToTrayToggle().IsOn(m_closeToTrayOnClose);
-
-        m_launchOnStartup = settings.behavior.launchOnStartup;
-        LaunchOnStartupToggle().IsOn(m_launchOnStartup);
-
-        m_startMinimizedToTray = settings.behavior.startMinimizedToTray;
-        StartMinimizedToggle().IsOn(m_startMinimizedToTray);
-
-        m_trayLeftClickToggles = settings.behavior.trayLeftClickToggles;
-        TrayLeftClickToggle().IsOn(m_trayLeftClickToggles);
-
-        m_sensitiveKeywordFilter = settings.media.sensitiveKeywordFilter;
-        SensitiveFilterToggle().IsOn(m_sensitiveKeywordFilter);
-        m_presence->SetSensitiveKeywordFilter(m_sensitiveKeywordFilter);
-
-        m_strictBrowserPrivacy = settings.media.strictBrowserPrivacy;
-        StrictBrowserPrivacyToggle().IsOn(m_strictBrowserPrivacy);
-        m_presence->SetStrictBrowserPrivacy(m_strictBrowserPrivacy);
-
-        m_suppressBrowserAlbumArt = settings.media.suppressBrowserAlbumArt;
-        SuppressBrowserArtToggle().IsOn(m_suppressBrowserAlbumArt);
-        m_presence->SetSuppressBrowserAlbumArt(m_suppressBrowserAlbumArt);
-
-        m_themeMode = settings.behavior.themeMode;
-        ThemeModeCombo().SelectedIndex(ThemeModeToComboIndex(m_themeMode));
-        ApplyThemeMode();
-
-        m_blockedAppSiteTermsRaw = settings.media.blockedAppSiteTermsRaw;
-        BlockedAppSitesBox().Text(m_blockedAppSiteTermsRaw);
-        m_presence->SetBlockedAppSiteTerms(ParseBlockedTerms(m_blockedAppSiteTermsRaw));
-
-        m_mediaActivityTypeOverride = settings.media.activityTypeOverride;
-        m_creativeActivityTypeOverride = settings.creative.activityTypeOverride;
-        m_productiveActivityTypeOverride = settings.productive.activityTypeOverride;
-        MediaActivityTypeCombo().SelectedIndex(ActivityTypeOverrideToComboIndex(m_mediaActivityTypeOverride));
-        CreativeActivityTypeCombo().SelectedIndex(ActivityTypeOverrideToComboIndex(m_creativeActivityTypeOverride));
-        ProductiveActivityTypeCombo().SelectedIndex(ActivityTypeOverrideToComboIndex(m_productiveActivityTypeOverride));
-        ApplyActivityTypeOverrides();
-
-        ProductiveEnableToggle().IsOn(settings.productive.enabled);
-        m_productiveDetectionMode = settings.productive.detectionMode;
-        ProductiveDetectionModeCombo().SelectedIndex(ProductiveDetectionModeToComboIndex(m_productiveDetectionMode));
-        m_productiveShowProjectName = settings.productive.showProjectName;
-        ProductiveShowProjectToggle().IsOn(m_productiveShowProjectName);
-        ProductiveAppWordCheck().IsChecked(settings.productive.wordEnabled);
-        ProductiveAppExcelCheck().IsChecked(settings.productive.excelEnabled);
-        ProductiveAppPowerPointCheck().IsChecked(settings.productive.powerPointEnabled);
-        ProductiveAppOneNoteCheck().IsChecked(settings.productive.oneNoteEnabled);
-        ProductiveAppAccessCheck().IsChecked(settings.productive.accessEnabled);
-        ProductiveAppPublisherCheck().IsChecked(settings.productive.publisherEnabled);
-        ProductiveAppVisioCheck().IsChecked(settings.productive.visioEnabled);
-        ProductiveAppProjectCheck().IsChecked(settings.productive.projectEnabled);
-        ProductiveAppCodexCheck().IsChecked(settings.productive.codexEnabled);
-
-        CreativeEnableToggle().IsOn(settings.creative.enabled);
-        m_creativePriority = settings.creative.priority;
-        CreativePriorityCombo().SelectedIndex(CreativePriorityModeToComboIndex(m_creativePriority));
-        m_creativeDetectionMode = settings.creative.detectionMode;
-        CreativeDetectionModeCombo().SelectedIndex(CreativeDetectionModeToComboIndex(m_creativeDetectionMode));
-        CreativeShowProjectToggle().IsOn(settings.creative.showProjectName);
-        CreativeShowWindowTitleToggle().IsOn(settings.creative.showWindowTitle);
-        CreativeAppPhotoshopCheck().IsChecked(settings.creative.photoshopEnabled);
-        CreativeAppIllustratorCheck().IsChecked(settings.creative.illustratorEnabled);
-        CreativeAppPremiereCheck().IsChecked(settings.creative.premiereEnabled);
-        CreativeAppAfterEffectsCheck().IsChecked(settings.creative.afterEffectsEnabled);
-        CreativeAppInDesignCheck().IsChecked(settings.creative.inDesignEnabled);
-        CreativeAppAuditionCheck().IsChecked(settings.creative.auditionEnabled);
-        CreativeAppMediaEncoderCheck().IsChecked(settings.creative.mediaEncoderEnabled);
-        CreativeAppLightroomCheck().IsChecked(settings.creative.lightroomEnabled);
-        CreativeAppLightroomClassicCheck().IsChecked(settings.creative.lightroomClassicEnabled);
-        CreativeAppInCopyCheck().IsChecked(settings.creative.inCopyEnabled);
-        CreativeAppDreamweaverCheck().IsChecked(settings.creative.dreamweaverEnabled);
-        CreativeAppAnimateCheck().IsChecked(settings.creative.animateEnabled);
-        CreativeAppXdCheck().IsChecked(settings.creative.xdEnabled);
-        CreativeAppBridgeCheck().IsChecked(settings.creative.bridgeEnabled);
-        CreativeAppCharacterAnimatorCheck().IsChecked(settings.creative.characterAnimatorEnabled);
-        CreativeAppFrescoCheck().IsChecked(settings.creative.frescoEnabled);
-        CreativeAppDimensionCheck().IsChecked(settings.creative.dimensionEnabled);
-        CreativeAppSubstanceCheck().IsChecked(settings.creative.substanceEnabled);
-        CreativeAppAcrobatCheck().IsChecked(settings.creative.acrobatEnabled);
-        CreativeAppOtherAdobeCheck().IsChecked(settings.creative.otherAdobeEnabled);
-
-        m_creativePrivacyMode = settings.creative.privacyMode;
-        CreativePrivacyCombo().SelectedIndex(CreativePrivacyModeToComboIndex(m_creativePrivacyMode));
-
-        m_creativeIdleBehavior = settings.creative.idleBehavior;
-        CreativeIdleBehaviorCombo().SelectedIndex(CreativeIdleBehaviorToComboIndex(m_creativeIdleBehavior));
-
-        SyncProductiveSettingsFromControls();
-        UpdateProductivePreview(m_lastProductiveActivity);
-        SyncCreativeSettingsFromControls();
-        ApplyCreativeDetectorRuntimeState();
-        RefreshCreativePreviewFromCurrentState();
-    }
-
-    void MainWindow::SaveSettings()
+    lrp::settings::PersistedSettings MainWindow::BuildPersistedSettingsSnapshot()
     {
         lrp::settings::PersistedSettings settings;
         settings.media.showTimestamps = TimestampToggle().IsOn();
@@ -6919,8 +6775,181 @@ namespace winrt::Last_Rich_Presence::implementation
         settings.creative.otherAdobeEnabled = m_creativeOtherAdobeEnabled;
         settings.creative.privacyMode = m_creativePrivacyMode;
         settings.creative.idleBehavior = m_creativeIdleBehavior;
+        return settings;
+    }
 
-        lrp::settings::SavePersistedSettings(settings);
+    void MainWindow::ApplyPersistedSettingsSnapshot(const lrp::settings::PersistedSettings& settings)
+    {
+        m_enabled = settings.behavior.richPresenceEnabled;
+        EnableToggle().IsOn(m_enabled);
+
+        TimestampToggle().IsOn(settings.media.showTimestamps);
+        m_presence->SetShowTimestamps(settings.media.showTimestamps);
+
+        SourceToggle().IsOn(settings.media.showSource);
+        m_presence->SetShowSource(settings.media.showSource);
+
+        m_sourceDebugMode = settings.media.sourceDebugMode;
+        SourceDebugToggle().IsOn(m_sourceDebugMode);
+
+        PausedToggle().IsOn(settings.media.showPaused);
+        m_presence->SetShowPaused(settings.media.showPaused);
+
+        AlbumArtToggle().IsOn(settings.media.showAlbumArt);
+        m_presence->SetShowAlbumArt(settings.media.showAlbumArt);
+
+        m_showDefaultIdleStatus = settings.media.showDefaultIdleStatus;
+        DefaultIdleStatusToggle().IsOn(m_showDefaultIdleStatus);
+        m_presence->SetShowIdleStatus(m_showDefaultIdleStatus);
+
+        m_closeToTrayOnClose = settings.behavior.closeToTrayOnClose;
+        CloseToTrayToggle().IsOn(m_closeToTrayOnClose);
+
+        m_launchOnStartup = settings.behavior.launchOnStartup;
+        LaunchOnStartupToggle().IsOn(m_launchOnStartup);
+
+        m_startMinimizedToTray = settings.behavior.startMinimizedToTray;
+        StartMinimizedToggle().IsOn(m_startMinimizedToTray);
+
+        m_trayLeftClickToggles = settings.behavior.trayLeftClickToggles;
+        TrayLeftClickToggle().IsOn(m_trayLeftClickToggles);
+
+        m_sensitiveKeywordFilter = settings.media.sensitiveKeywordFilter;
+        SensitiveFilterToggle().IsOn(m_sensitiveKeywordFilter);
+        m_presence->SetSensitiveKeywordFilter(m_sensitiveKeywordFilter);
+
+        m_strictBrowserPrivacy = settings.media.strictBrowserPrivacy;
+        StrictBrowserPrivacyToggle().IsOn(m_strictBrowserPrivacy);
+        m_presence->SetStrictBrowserPrivacy(m_strictBrowserPrivacy);
+
+        m_suppressBrowserAlbumArt = settings.media.suppressBrowserAlbumArt;
+        SuppressBrowserArtToggle().IsOn(m_suppressBrowserAlbumArt);
+        m_presence->SetSuppressBrowserAlbumArt(m_suppressBrowserAlbumArt);
+
+        m_themeMode = settings.behavior.themeMode;
+        ThemeModeCombo().SelectedIndex(ThemeModeToComboIndex(m_themeMode));
+        ApplyThemeMode();
+
+        m_blockedAppSiteTermsRaw = settings.media.blockedAppSiteTermsRaw;
+        BlockedAppSitesBox().Text(m_blockedAppSiteTermsRaw);
+        m_presence->SetBlockedAppSiteTerms(ParseBlockedTerms(m_blockedAppSiteTermsRaw));
+
+        m_mediaActivityTypeOverride = settings.media.activityTypeOverride;
+        m_creativeActivityTypeOverride = settings.creative.activityTypeOverride;
+        m_productiveActivityTypeOverride = settings.productive.activityTypeOverride;
+        MediaActivityTypeCombo().SelectedIndex(ActivityTypeOverrideToComboIndex(m_mediaActivityTypeOverride));
+        CreativeActivityTypeCombo().SelectedIndex(ActivityTypeOverrideToComboIndex(m_creativeActivityTypeOverride));
+        ProductiveActivityTypeCombo().SelectedIndex(ActivityTypeOverrideToComboIndex(m_productiveActivityTypeOverride));
+        ApplyActivityTypeOverrides();
+
+        m_productiveEnabled = settings.productive.enabled;
+        ProductiveEnableToggle().IsOn(m_productiveEnabled);
+        m_productiveDetectionMode = settings.productive.detectionMode;
+        ProductiveDetectionModeCombo().SelectedIndex(ProductiveDetectionModeToComboIndex(m_productiveDetectionMode));
+        m_productiveShowProjectName = settings.productive.showProjectName;
+        ProductiveShowProjectToggle().IsOn(m_productiveShowProjectName);
+        m_productiveWordEnabled = settings.productive.wordEnabled;
+        ProductiveAppWordCheck().IsChecked(settings.productive.wordEnabled);
+        m_productiveExcelEnabled = settings.productive.excelEnabled;
+        ProductiveAppExcelCheck().IsChecked(settings.productive.excelEnabled);
+        m_productivePowerPointEnabled = settings.productive.powerPointEnabled;
+        ProductiveAppPowerPointCheck().IsChecked(settings.productive.powerPointEnabled);
+        m_productiveOneNoteEnabled = settings.productive.oneNoteEnabled;
+        ProductiveAppOneNoteCheck().IsChecked(settings.productive.oneNoteEnabled);
+        m_productiveAccessEnabled = settings.productive.accessEnabled;
+        ProductiveAppAccessCheck().IsChecked(settings.productive.accessEnabled);
+        m_productivePublisherEnabled = settings.productive.publisherEnabled;
+        ProductiveAppPublisherCheck().IsChecked(settings.productive.publisherEnabled);
+        m_productiveVisioEnabled = settings.productive.visioEnabled;
+        ProductiveAppVisioCheck().IsChecked(settings.productive.visioEnabled);
+        m_productiveProjectEnabled = settings.productive.projectEnabled;
+        ProductiveAppProjectCheck().IsChecked(settings.productive.projectEnabled);
+        m_productiveCodexEnabled = settings.productive.codexEnabled;
+        ProductiveAppCodexCheck().IsChecked(settings.productive.codexEnabled);
+
+        m_creativeEnabled = settings.creative.enabled;
+        CreativeEnableToggle().IsOn(m_creativeEnabled);
+        m_creativePriority = settings.creative.priority;
+        CreativePriorityCombo().SelectedIndex(CreativePriorityModeToComboIndex(m_creativePriority));
+        m_creativeDetectionMode = settings.creative.detectionMode;
+        CreativeDetectionModeCombo().SelectedIndex(CreativeDetectionModeToComboIndex(m_creativeDetectionMode));
+        m_creativeShowProjectName = settings.creative.showProjectName;
+        CreativeShowProjectToggle().IsOn(settings.creative.showProjectName);
+        m_creativeShowWindowTitle = settings.creative.showWindowTitle;
+        CreativeShowWindowTitleToggle().IsOn(settings.creative.showWindowTitle);
+        m_creativePhotoshopEnabled = settings.creative.photoshopEnabled;
+        CreativeAppPhotoshopCheck().IsChecked(settings.creative.photoshopEnabled);
+        m_creativeIllustratorEnabled = settings.creative.illustratorEnabled;
+        CreativeAppIllustratorCheck().IsChecked(settings.creative.illustratorEnabled);
+        m_creativePremiereEnabled = settings.creative.premiereEnabled;
+        CreativeAppPremiereCheck().IsChecked(settings.creative.premiereEnabled);
+        m_creativeAfterEffectsEnabled = settings.creative.afterEffectsEnabled;
+        CreativeAppAfterEffectsCheck().IsChecked(settings.creative.afterEffectsEnabled);
+        m_creativeInDesignEnabled = settings.creative.inDesignEnabled;
+        CreativeAppInDesignCheck().IsChecked(settings.creative.inDesignEnabled);
+        m_creativeAuditionEnabled = settings.creative.auditionEnabled;
+        CreativeAppAuditionCheck().IsChecked(settings.creative.auditionEnabled);
+        m_creativeMediaEncoderEnabled = settings.creative.mediaEncoderEnabled;
+        CreativeAppMediaEncoderCheck().IsChecked(settings.creative.mediaEncoderEnabled);
+        m_creativeLightroomEnabled = settings.creative.lightroomEnabled;
+        CreativeAppLightroomCheck().IsChecked(settings.creative.lightroomEnabled);
+        m_creativeLightroomClassicEnabled = settings.creative.lightroomClassicEnabled;
+        CreativeAppLightroomClassicCheck().IsChecked(settings.creative.lightroomClassicEnabled);
+        m_creativeInCopyEnabled = settings.creative.inCopyEnabled;
+        CreativeAppInCopyCheck().IsChecked(settings.creative.inCopyEnabled);
+        m_creativeDreamweaverEnabled = settings.creative.dreamweaverEnabled;
+        CreativeAppDreamweaverCheck().IsChecked(settings.creative.dreamweaverEnabled);
+        m_creativeAnimateEnabled = settings.creative.animateEnabled;
+        CreativeAppAnimateCheck().IsChecked(settings.creative.animateEnabled);
+        m_creativeXdEnabled = settings.creative.xdEnabled;
+        CreativeAppXdCheck().IsChecked(settings.creative.xdEnabled);
+        m_creativeBridgeEnabled = settings.creative.bridgeEnabled;
+        CreativeAppBridgeCheck().IsChecked(settings.creative.bridgeEnabled);
+        m_creativeCharacterAnimatorEnabled = settings.creative.characterAnimatorEnabled;
+        CreativeAppCharacterAnimatorCheck().IsChecked(settings.creative.characterAnimatorEnabled);
+        m_creativeFrescoEnabled = settings.creative.frescoEnabled;
+        CreativeAppFrescoCheck().IsChecked(settings.creative.frescoEnabled);
+        m_creativeDimensionEnabled = settings.creative.dimensionEnabled;
+        CreativeAppDimensionCheck().IsChecked(settings.creative.dimensionEnabled);
+        m_creativeSubstanceEnabled = settings.creative.substanceEnabled;
+        CreativeAppSubstanceCheck().IsChecked(settings.creative.substanceEnabled);
+        m_creativeAcrobatEnabled = settings.creative.acrobatEnabled;
+        CreativeAppAcrobatCheck().IsChecked(settings.creative.acrobatEnabled);
+        m_creativeOtherAdobeEnabled = settings.creative.otherAdobeEnabled;
+        CreativeAppOtherAdobeCheck().IsChecked(settings.creative.otherAdobeEnabled);
+
+        m_creativePrivacyMode = settings.creative.privacyMode;
+        CreativePrivacyCombo().SelectedIndex(CreativePrivacyModeToComboIndex(m_creativePrivacyMode));
+        m_creativeIdleBehavior = settings.creative.idleBehavior;
+        CreativeIdleBehaviorCombo().SelectedIndex(CreativeIdleBehaviorToComboIndex(m_creativeIdleBehavior));
+    }
+
+    void MainWindow::AppendSettingsIssues(const std::wstring& operation, const std::vector<lrp::settings::SettingsIssue>& issues)
+    {
+        if (issues.empty())
+            return;
+
+        AppendDiagnosticLog(L"WARN", L"settings", operation + L" warnings: " + JoinIssueMessages(issues));
+    }
+
+    void MainWindow::LoadSettings()
+    {
+        auto loadResult = lrp::settings::LoadPersistedSettingsWithResult();
+        ApplyPersistedSettingsSnapshot(loadResult.settings);
+
+        SyncProductiveSettingsFromControls();
+        UpdateProductivePreview(m_lastProductiveActivity);
+        SyncCreativeSettingsFromControls();
+        ApplyCreativeDetectorRuntimeState();
+        RefreshCreativePreviewFromCurrentState();
+        AppendSettingsIssues(L"Load settings", loadResult.issues);
+    }
+
+    lrp::settings::SettingsSaveResult MainWindow::SaveSettings()
+    {
+        auto saveResult = lrp::settings::SavePersistedSettingsWithResult(BuildPersistedSettingsSnapshot());
+        AppendSettingsIssues(L"Save settings", saveResult.issues);
+        return saveResult;
     }
 
     // =====================================================================

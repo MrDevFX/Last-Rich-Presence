@@ -39,6 +39,7 @@ public:
     void SetActivityTypeOverride(int type);
 
     bool IsConnected() const;
+    DiscordRpcStatus GetTransportStatus() const;
 
 private:
     struct ArtFetchJob

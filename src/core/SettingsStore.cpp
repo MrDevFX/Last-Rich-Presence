@@ -2,6 +2,7 @@
 
 #include "SettingsStore.h"
 
+#include "SettingsImport.h"
 #include "StartupRegistration.h"
 
 namespace
@@ -9,161 +10,311 @@ namespace
     using winrt::Windows::Storage::ApplicationData;
     using winrt::Windows::Storage::ApplicationDataContainer;
 
-    bool ReadBool(ApplicationDataContainer const& container, const wchar_t* key, bool fallback)
+    struct StoredBoolValue
     {
-        auto value = container.Values().TryLookup(key);
-        if (!value)
-            return fallback;
+        bool present{ false };
+        bool valid{ true };
+        bool value{ false };
+    };
 
-        try
-        {
-            return winrt::unbox_value<bool>(value);
-        }
-        catch (...)
-        {
-            return fallback;
-        }
+    struct StoredStringValue
+    {
+        bool present{ false };
+        bool valid{ true };
+        std::wstring value;
+    };
+
+    void AppendIssue(
+        std::vector<lrp::settings::SettingsIssue>& issues,
+        const wchar_t* key,
+        const wchar_t* message)
+    {
+        issues.push_back({ key, message });
     }
 
-    std::wstring ReadString(ApplicationDataContainer const& container, const wchar_t* key, const std::wstring& fallback)
+    StoredBoolValue ReadStoredBool(ApplicationDataContainer const& container, const wchar_t* key)
     {
+        StoredBoolValue result{};
         auto value = container.Values().TryLookup(key);
         if (!value)
-            return fallback;
+            return result;
+
+        result.present = true;
 
         try
         {
-            return std::wstring(winrt::unbox_value<winrt::hstring>(value).c_str());
+            result.value = winrt::unbox_value<bool>(value);
         }
         catch (...)
         {
-            return fallback;
+            result.valid = false;
         }
+
+        return result;
+    }
+
+    StoredStringValue ReadStoredString(ApplicationDataContainer const& container, const wchar_t* key)
+    {
+        StoredStringValue result{};
+        auto value = container.Values().TryLookup(key);
+        if (!value)
+            return result;
+
+        result.present = true;
+
+        try
+        {
+            result.value = std::wstring(winrt::unbox_value<winrt::hstring>(value).c_str());
+        }
+        catch (...)
+        {
+            result.valid = false;
+        }
+
+        return result;
+    }
+
+    void ApplyStoredBoolSetting(
+        ApplicationDataContainer const& localSettings,
+        const wchar_t* key,
+        bool& target,
+        std::vector<lrp::settings::SettingsIssue>& issues)
+    {
+        auto stored = ReadStoredBool(localSettings, key);
+        if (!stored.present)
+            return;
+
+        if (!stored.valid)
+        {
+            AppendIssue(issues, key, L"Stored value is not a boolean; kept the current default.");
+            return;
+        }
+
+        target = stored.value;
+    }
+
+    void ApplyStoredStringSetting(
+        ApplicationDataContainer const& localSettings,
+        const wchar_t* key,
+        std::wstring& target,
+        std::vector<lrp::settings::SettingsIssue>& issues)
+    {
+        auto stored = ReadStoredString(localSettings, key);
+        if (!stored.present)
+            return;
+
+        if (!stored.valid)
+        {
+            AppendIssue(issues, key, L"Stored value is not a string; kept the current default.");
+            return;
+        }
+
+        target = std::move(stored.value);
+    }
+
+    template <typename TValue, typename TTryParse>
+    void ApplyStoredParsedStringSetting(
+        ApplicationDataContainer const& localSettings,
+        const wchar_t* key,
+        TValue& target,
+        TTryParse tryParse,
+        std::vector<lrp::settings::SettingsIssue>& issues)
+    {
+        auto stored = ReadStoredString(localSettings, key);
+        if (!stored.present)
+            return;
+
+        if (!stored.valid)
+        {
+            AppendIssue(issues, key, L"Stored value is not a string; kept the current default.");
+            return;
+        }
+
+        TValue parsed{};
+        if (!tryParse(stored.value, parsed))
+        {
+            AppendIssue(issues, key, L"Stored value is not recognized; kept the current default.");
+            return;
+        }
+
+        target = parsed;
     }
 }
 
 namespace lrp::settings
 {
-    PersistedSettings LoadPersistedSettings()
+    SettingsLoadResult LoadPersistedSettingsWithResult()
     {
-        PersistedSettings settings;
+        SettingsLoadResult result{};
 
-        bool launchOnStartupFromRegistry = false;
-        bool hasLaunchOnStartupRegistryValue = startup::TryReadUserPreferenceBool(
+        RegistryPreferenceOverrides registryOverrides{};
+        registryOverrides.hasLaunchOnStartup = startup::TryReadUserPreferenceBool(
             startup::kLaunchOnStartupRegistryValueName,
-            launchOnStartupFromRegistry);
-
-        bool startMinimizedFromRegistry = false;
-        bool hasStartMinimizedRegistryValue = startup::TryReadUserPreferenceBool(
+            registryOverrides.launchOnStartup);
+        registryOverrides.hasStartMinimizedToTray = startup::TryReadUserPreferenceBool(
             startup::kStartMinimizedRegistryValueName,
-            startMinimizedFromRegistry);
-
-        bool showDefaultIdleStatusFromRegistry = false;
-        bool hasShowDefaultIdleStatusRegistryValue = startup::TryReadUserPreferenceBool(
+            registryOverrides.startMinimizedToTray);
+        registryOverrides.hasShowDefaultIdleStatus = startup::TryReadUserPreferenceBool(
             startup::kShowDefaultIdleStatusRegistryValueName,
-            showDefaultIdleStatusFromRegistry);
+            registryOverrides.showDefaultIdleStatus);
+
+        const bool actualRunStartupEnabled = startup::IsRunStartupEnabledForCurrentExecutable();
 
         try
         {
             auto localSettings = ApplicationData::Current().LocalSettings();
 
-            settings.media.showTimestamps = ReadBool(localSettings, L"ShowTimestamps", settings.media.showTimestamps);
-            settings.media.showSource = ReadBool(localSettings, L"ShowSourceApp", settings.media.showSource);
-            settings.media.sourceDebugMode = ReadBool(localSettings, L"SourceDebugMode", settings.media.sourceDebugMode);
-            settings.media.showPaused = ReadBool(localSettings, L"ShowPaused", settings.media.showPaused);
-            settings.media.showAlbumArt = ReadBool(localSettings, L"ShowAlbumArt", settings.media.showAlbumArt);
-            settings.media.showDefaultIdleStatus = ReadBool(localSettings, L"ShowDefaultIdleStatus", settings.media.showDefaultIdleStatus);
-            if (hasShowDefaultIdleStatusRegistryValue)
-                settings.media.showDefaultIdleStatus = showDefaultIdleStatusFromRegistry;
+            ApplyStoredBoolSetting(localSettings, L"ShowTimestamps", result.settings.media.showTimestamps, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"ShowSourceApp", result.settings.media.showSource, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"SourceDebugMode", result.settings.media.sourceDebugMode, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"ShowPaused", result.settings.media.showPaused, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"ShowAlbumArt", result.settings.media.showAlbumArt, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"ShowDefaultIdleStatus", result.settings.media.showDefaultIdleStatus, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"SensitiveKeywordFilter", result.settings.media.sensitiveKeywordFilter, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"StrictBrowserPrivacy", result.settings.media.strictBrowserPrivacy, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"SuppressBrowserAlbumArt", result.settings.media.suppressBrowserAlbumArt, result.issues);
+            ApplyStoredStringSetting(localSettings, L"BlockedAppSiteTerms", result.settings.media.blockedAppSiteTermsRaw, result.issues);
 
-            settings.behavior.richPresenceEnabled = ReadBool(localSettings, L"RichPresenceEnabled", settings.behavior.richPresenceEnabled);
-            settings.behavior.closeToTrayOnClose = ReadBool(localSettings, L"CloseToTrayOnClose", settings.behavior.closeToTrayOnClose);
-            auto launchOnStartupDefault = startup::IsRunStartupEnabledForCurrentExecutable();
-            auto launchOnStartupStored = ReadBool(localSettings, L"LaunchOnStartup", launchOnStartupDefault);
-            settings.behavior.launchOnStartup = hasLaunchOnStartupRegistryValue
-                ? launchOnStartupFromRegistry
-                : (launchOnStartupStored || launchOnStartupDefault);
+            ApplyStoredBoolSetting(localSettings, L"RichPresenceEnabled", result.settings.behavior.richPresenceEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"CloseToTrayOnClose", result.settings.behavior.closeToTrayOnClose, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"LaunchOnStartup", result.settings.behavior.launchOnStartup, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"StartMinimizedToTray", result.settings.behavior.startMinimizedToTray, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"TrayLeftClickToggles", result.settings.behavior.trayLeftClickToggles, result.issues);
 
-            auto startMinimizedDefault = hasStartMinimizedRegistryValue
-                ? startMinimizedFromRegistry
-                : settings.behavior.startMinimizedToTray;
-            settings.behavior.startMinimizedToTray = ReadBool(localSettings, L"StartMinimizedToTray", startMinimizedDefault);
-            if (hasStartMinimizedRegistryValue)
-                settings.behavior.startMinimizedToTray = startMinimizedFromRegistry;
+            ApplyStoredParsedStringSetting(
+                localSettings,
+                L"ThemeMode",
+                result.settings.behavior.themeMode,
+                [](const std::wstring& value, AppThemeMode& parsedOut)
+                {
+                    return TryParseThemeMode(value, parsedOut);
+                },
+                result.issues);
+            ApplyStoredParsedStringSetting(
+                localSettings,
+                L"MediaActivityType",
+                result.settings.media.activityTypeOverride,
+                [](const std::wstring& value, int& parsedOut)
+                {
+                    return TryParseActivityTypeOverride(value, parsedOut);
+                },
+                result.issues);
 
-            settings.behavior.trayLeftClickToggles = ReadBool(localSettings, L"TrayLeftClickToggles", settings.behavior.trayLeftClickToggles);
-            settings.behavior.themeMode = ParseThemeMode(ReadString(localSettings, L"ThemeMode", ToSettingString(settings.behavior.themeMode)));
+            ApplyStoredBoolSetting(localSettings, L"ProductiveEnabled", result.settings.productive.enabled, result.issues);
+            ApplyStoredParsedStringSetting(
+                localSettings,
+                L"ProductiveDetectionMode",
+                result.settings.productive.detectionMode,
+                [](const std::wstring& value, ProductiveDetectionMode& parsedOut)
+                {
+                    return TryParseProductiveDetectionMode(value, parsedOut);
+                },
+                result.issues);
+            ApplyStoredBoolSetting(localSettings, L"ProductiveShowProjectName", result.settings.productive.showProjectName, result.issues);
+            ApplyStoredParsedStringSetting(
+                localSettings,
+                L"ProductiveActivityType",
+                result.settings.productive.activityTypeOverride,
+                [](const std::wstring& value, int& parsedOut)
+                {
+                    return TryParseActivityTypeOverride(value, parsedOut);
+                },
+                result.issues);
+            ApplyStoredBoolSetting(localSettings, L"ProductiveAppWordEnabled", result.settings.productive.wordEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"ProductiveAppExcelEnabled", result.settings.productive.excelEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"ProductiveAppPowerPointEnabled", result.settings.productive.powerPointEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"ProductiveAppOneNoteEnabled", result.settings.productive.oneNoteEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"ProductiveAppAccessEnabled", result.settings.productive.accessEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"ProductiveAppPublisherEnabled", result.settings.productive.publisherEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"ProductiveAppVisioEnabled", result.settings.productive.visioEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"ProductiveAppProjectEnabled", result.settings.productive.projectEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"ProductiveAppCodexEnabled", result.settings.productive.codexEnabled, result.issues);
 
-            settings.media.sensitiveKeywordFilter = ReadBool(localSettings, L"SensitiveKeywordFilter", settings.media.sensitiveKeywordFilter);
-            settings.media.strictBrowserPrivacy = ReadBool(localSettings, L"StrictBrowserPrivacy", settings.media.strictBrowserPrivacy);
-            settings.media.suppressBrowserAlbumArt = ReadBool(localSettings, L"SuppressBrowserAlbumArt", settings.media.suppressBrowserAlbumArt);
-            settings.media.blockedAppSiteTermsRaw = ReadString(localSettings, L"BlockedAppSiteTerms", settings.media.blockedAppSiteTermsRaw);
-            settings.media.activityTypeOverride = ParseActivityTypeOverride(ReadString(localSettings, L"MediaActivityType", L"auto"));
-
-            settings.productive.enabled = ReadBool(localSettings, L"ProductiveEnabled", settings.productive.enabled);
-            settings.productive.detectionMode = ParseProductiveDetectionMode(
-                ReadString(localSettings, L"ProductiveDetectionMode", ToSettingString(settings.productive.detectionMode)));
-            settings.productive.showProjectName = ReadBool(localSettings, L"ProductiveShowProjectName", settings.productive.showProjectName);
-            settings.productive.activityTypeOverride = ParseActivityTypeOverride(ReadString(localSettings, L"ProductiveActivityType", L"auto"));
-            settings.productive.wordEnabled = ReadBool(localSettings, L"ProductiveAppWordEnabled", settings.productive.wordEnabled);
-            settings.productive.excelEnabled = ReadBool(localSettings, L"ProductiveAppExcelEnabled", settings.productive.excelEnabled);
-            settings.productive.powerPointEnabled = ReadBool(localSettings, L"ProductiveAppPowerPointEnabled", settings.productive.powerPointEnabled);
-            settings.productive.oneNoteEnabled = ReadBool(localSettings, L"ProductiveAppOneNoteEnabled", settings.productive.oneNoteEnabled);
-            settings.productive.accessEnabled = ReadBool(localSettings, L"ProductiveAppAccessEnabled", settings.productive.accessEnabled);
-            settings.productive.publisherEnabled = ReadBool(localSettings, L"ProductiveAppPublisherEnabled", settings.productive.publisherEnabled);
-            settings.productive.visioEnabled = ReadBool(localSettings, L"ProductiveAppVisioEnabled", settings.productive.visioEnabled);
-            settings.productive.projectEnabled = ReadBool(localSettings, L"ProductiveAppProjectEnabled", settings.productive.projectEnabled);
-            settings.productive.codexEnabled = ReadBool(localSettings, L"ProductiveAppCodexEnabled", settings.productive.codexEnabled);
-
-            settings.creative.enabled = ReadBool(localSettings, L"CreativeEnabled", settings.creative.enabled);
-            settings.creative.priority = ParseCreativePriorityMode(
-                ReadString(localSettings, L"CreativePriority", ToSettingString(settings.creative.priority)));
-            settings.creative.detectionMode = ParseCreativeDetectionMode(
-                ReadString(localSettings, L"CreativeDetectionMode", ToSettingString(settings.creative.detectionMode)));
-            settings.creative.showProjectName = ReadBool(localSettings, L"CreativeShowProjectName", settings.creative.showProjectName);
-            settings.creative.showWindowTitle = ReadBool(localSettings, L"CreativeShowWindowTitle", settings.creative.showWindowTitle);
-            settings.creative.activityTypeOverride = ParseActivityTypeOverride(ReadString(localSettings, L"CreativeActivityType", L"auto"));
-            settings.creative.photoshopEnabled = ReadBool(localSettings, L"CreativeAppPhotoshopEnabled", settings.creative.photoshopEnabled);
-            settings.creative.illustratorEnabled = ReadBool(localSettings, L"CreativeAppIllustratorEnabled", settings.creative.illustratorEnabled);
-            settings.creative.premiereEnabled = ReadBool(localSettings, L"CreativeAppPremiereEnabled", settings.creative.premiereEnabled);
-            settings.creative.afterEffectsEnabled = ReadBool(localSettings, L"CreativeAppAfterEffectsEnabled", settings.creative.afterEffectsEnabled);
-            settings.creative.inDesignEnabled = ReadBool(localSettings, L"CreativeAppInDesignEnabled", settings.creative.inDesignEnabled);
-            settings.creative.auditionEnabled = ReadBool(localSettings, L"CreativeAppAuditionEnabled", settings.creative.auditionEnabled);
-            settings.creative.mediaEncoderEnabled = ReadBool(localSettings, L"CreativeAppMediaEncoderEnabled", settings.creative.mediaEncoderEnabled);
-            settings.creative.lightroomEnabled = ReadBool(localSettings, L"CreativeAppLightroomEnabled", settings.creative.lightroomEnabled);
-            settings.creative.lightroomClassicEnabled = ReadBool(localSettings, L"CreativeAppLightroomClassicEnabled", settings.creative.lightroomClassicEnabled);
-            settings.creative.inCopyEnabled = ReadBool(localSettings, L"CreativeAppInCopyEnabled", settings.creative.inCopyEnabled);
-            settings.creative.dreamweaverEnabled = ReadBool(localSettings, L"CreativeAppDreamweaverEnabled", settings.creative.dreamweaverEnabled);
-            settings.creative.animateEnabled = ReadBool(localSettings, L"CreativeAppAnimateEnabled", settings.creative.animateEnabled);
-            settings.creative.xdEnabled = ReadBool(localSettings, L"CreativeAppXdEnabled", settings.creative.xdEnabled);
-            settings.creative.bridgeEnabled = ReadBool(localSettings, L"CreativeAppBridgeEnabled", settings.creative.bridgeEnabled);
-            settings.creative.characterAnimatorEnabled = ReadBool(localSettings, L"CreativeAppCharacterAnimatorEnabled", settings.creative.characterAnimatorEnabled);
-            settings.creative.frescoEnabled = ReadBool(localSettings, L"CreativeAppFrescoEnabled", settings.creative.frescoEnabled);
-            settings.creative.dimensionEnabled = ReadBool(localSettings, L"CreativeAppDimensionEnabled", settings.creative.dimensionEnabled);
-            settings.creative.substanceEnabled = ReadBool(localSettings, L"CreativeAppSubstanceEnabled", settings.creative.substanceEnabled);
-            settings.creative.acrobatEnabled = ReadBool(localSettings, L"CreativeAppAcrobatEnabled", settings.creative.acrobatEnabled);
-            settings.creative.otherAdobeEnabled = ReadBool(localSettings, L"CreativeAppOtherAdobeEnabled", settings.creative.otherAdobeEnabled);
-            settings.creative.privacyMode = ParseCreativePrivacyMode(
-                ReadString(localSettings, L"CreativePrivacyMode", ToSettingString(settings.creative.privacyMode)));
-            settings.creative.idleBehavior = ParseCreativeIdleBehavior(
-                ReadString(localSettings, L"CreativeIdleBehavior", ToSettingString(settings.creative.idleBehavior)));
+            ApplyStoredBoolSetting(localSettings, L"CreativeEnabled", result.settings.creative.enabled, result.issues);
+            ApplyStoredParsedStringSetting(
+                localSettings,
+                L"CreativePriority",
+                result.settings.creative.priority,
+                [](const std::wstring& value, CreativePriorityMode& parsedOut)
+                {
+                    return TryParseCreativePriorityMode(value, parsedOut);
+                },
+                result.issues);
+            ApplyStoredParsedStringSetting(
+                localSettings,
+                L"CreativeDetectionMode",
+                result.settings.creative.detectionMode,
+                [](const std::wstring& value, CreativeDetectionMode& parsedOut)
+                {
+                    return TryParseCreativeDetectionMode(value, parsedOut);
+                },
+                result.issues);
+            ApplyStoredBoolSetting(localSettings, L"CreativeShowProjectName", result.settings.creative.showProjectName, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"CreativeShowWindowTitle", result.settings.creative.showWindowTitle, result.issues);
+            ApplyStoredParsedStringSetting(
+                localSettings,
+                L"CreativeActivityType",
+                result.settings.creative.activityTypeOverride,
+                [](const std::wstring& value, int& parsedOut)
+                {
+                    return TryParseActivityTypeOverride(value, parsedOut);
+                },
+                result.issues);
+            ApplyStoredBoolSetting(localSettings, L"CreativeAppPhotoshopEnabled", result.settings.creative.photoshopEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"CreativeAppIllustratorEnabled", result.settings.creative.illustratorEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"CreativeAppPremiereEnabled", result.settings.creative.premiereEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"CreativeAppAfterEffectsEnabled", result.settings.creative.afterEffectsEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"CreativeAppInDesignEnabled", result.settings.creative.inDesignEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"CreativeAppAuditionEnabled", result.settings.creative.auditionEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"CreativeAppMediaEncoderEnabled", result.settings.creative.mediaEncoderEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"CreativeAppLightroomEnabled", result.settings.creative.lightroomEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"CreativeAppLightroomClassicEnabled", result.settings.creative.lightroomClassicEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"CreativeAppInCopyEnabled", result.settings.creative.inCopyEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"CreativeAppDreamweaverEnabled", result.settings.creative.dreamweaverEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"CreativeAppAnimateEnabled", result.settings.creative.animateEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"CreativeAppXdEnabled", result.settings.creative.xdEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"CreativeAppBridgeEnabled", result.settings.creative.bridgeEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"CreativeAppCharacterAnimatorEnabled", result.settings.creative.characterAnimatorEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"CreativeAppFrescoEnabled", result.settings.creative.frescoEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"CreativeAppDimensionEnabled", result.settings.creative.dimensionEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"CreativeAppSubstanceEnabled", result.settings.creative.substanceEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"CreativeAppAcrobatEnabled", result.settings.creative.acrobatEnabled, result.issues);
+            ApplyStoredBoolSetting(localSettings, L"CreativeAppOtherAdobeEnabled", result.settings.creative.otherAdobeEnabled, result.issues);
+            ApplyStoredParsedStringSetting(
+                localSettings,
+                L"CreativePrivacyMode",
+                result.settings.creative.privacyMode,
+                [](const std::wstring& value, CreativePrivacyMode& parsedOut)
+                {
+                    return TryParseCreativePrivacyMode(value, parsedOut);
+                },
+                result.issues);
+            ApplyStoredParsedStringSetting(
+                localSettings,
+                L"CreativeIdleBehavior",
+                result.settings.creative.idleBehavior,
+                [](const std::wstring& value, CreativeIdleBehavior& parsedOut)
+                {
+                    return TryParseCreativeIdleBehavior(value, parsedOut);
+                },
+                result.issues);
         }
         catch (...)
         {
+            AppendIssue(
+                result.issues,
+                L"LocalSettings",
+                L"Failed to access the local settings store; using defaults with any registry-backed overrides.");
         }
 
-        if (hasLaunchOnStartupRegistryValue)
-            settings.behavior.launchOnStartup = launchOnStartupFromRegistry;
-        if (hasStartMinimizedRegistryValue)
-            settings.behavior.startMinimizedToTray = startMinimizedFromRegistry;
-        if (hasShowDefaultIdleStatusRegistryValue)
-            settings.media.showDefaultIdleStatus = showDefaultIdleStatusFromRegistry;
-
-        return settings;
+        ApplyRegistryPreferenceOverrides(result.settings, registryOverrides, actualRunStartupEnabled);
+        return result;
     }
 
-    void SavePersistedSettings(const PersistedSettings& settings)
+    SettingsSaveResult SavePersistedSettingsWithResult(const PersistedSettings& settings)
     {
+        SettingsSaveResult result{};
+
         try
         {
             auto localSettings = ApplicationData::Current().LocalSettings();
@@ -232,10 +383,49 @@ namespace lrp::settings
         }
         catch (...)
         {
+            result.localSettingsSucceeded = false;
+            AppendIssue(
+                result.issues,
+                L"LocalSettings",
+                L"Failed to write one or more local settings values; some settings may not persist.");
         }
 
-        startup::WriteUserPreferenceBool(startup::kLaunchOnStartupRegistryValueName, settings.behavior.launchOnStartup);
-        startup::WriteUserPreferenceBool(startup::kStartMinimizedRegistryValueName, settings.behavior.startMinimizedToTray);
-        startup::WriteUserPreferenceBool(startup::kShowDefaultIdleStatusRegistryValueName, settings.media.showDefaultIdleStatus);
+        if (!result.localSettingsSucceeded)
+        {
+            result.registrySucceeded = false;
+            AppendIssue(
+                result.issues,
+                L"RegistryBackedPreferences",
+                L"Skipped registry-backed preference writes because the local settings save failed.");
+            return result;
+        }
+
+        auto writeRegistryBool = [&](const wchar_t* key, bool value)
+        {
+            if (startup::WriteUserPreferenceBool(key, value))
+                return;
+
+            result.registrySucceeded = false;
+            AppendIssue(
+                result.issues,
+                key,
+                L"Failed to write the registry-backed preference.");
+        };
+
+        writeRegistryBool(startup::kLaunchOnStartupRegistryValueName, settings.behavior.launchOnStartup);
+        writeRegistryBool(startup::kStartMinimizedRegistryValueName, settings.behavior.startMinimizedToTray);
+        writeRegistryBool(startup::kShowDefaultIdleStatusRegistryValueName, settings.media.showDefaultIdleStatus);
+
+        return result;
+    }
+
+    PersistedSettings LoadPersistedSettings()
+    {
+        return LoadPersistedSettingsWithResult().settings;
+    }
+
+    void SavePersistedSettings(const PersistedSettings& settings)
+    {
+        (void)SavePersistedSettingsWithResult(settings);
     }
 }

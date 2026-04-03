@@ -104,6 +104,14 @@ namespace lrp::settings
         CreativeSettings creative;
     };
 
+    inline bool TryParseActivityTypeOverride(const std::wstring& value, int& parsedOut);
+    inline bool TryParseCreativePriorityMode(const std::wstring& value, CreativePriorityMode& parsedOut);
+    inline bool TryParseCreativePrivacyMode(const std::wstring& value, CreativePrivacyMode& parsedOut);
+    inline bool TryParseCreativeIdleBehavior(const std::wstring& value, CreativeIdleBehavior& parsedOut);
+    inline bool TryParseCreativeDetectionMode(const std::wstring& value, CreativeDetectionMode& parsedOut);
+    inline bool TryParseProductiveDetectionMode(const std::wstring& value, ProductiveDetectionMode& parsedOut);
+    inline bool TryParseThemeMode(const std::wstring& value, AppThemeMode& parsedOut);
+
     inline bool IsSupportedActivityType(int value)
     {
         return value == 0 || value == 2 || value == 3 || value == 5;
@@ -135,15 +143,10 @@ namespace lrp::settings
 
     inline int ParseActivityTypeOverride(const std::wstring& value)
     {
-        auto normalized = NormalizeSettingValue(value);
-        if (normalized == L"playing" || normalized == L"0")
-            return 0;
-        if (normalized == L"listening" || normalized == L"2")
-            return 2;
-        if (normalized == L"watching" || normalized == L"3")
-            return 3;
-        if (normalized == L"competing" || normalized == L"5")
-            return 5;
+        int parsed = -1;
+        if (TryParseActivityTypeOverride(value, parsed))
+            return parsed;
+
         return -1;
     }
 
@@ -203,11 +206,10 @@ namespace lrp::settings
 
     inline CreativePriorityMode ParseCreativePriorityMode(const std::wstring& value)
     {
-        auto normalized = NormalizeSettingValue(value);
-        if (normalized == L"prefer-media")
-            return CreativePriorityMode::PreferMedia;
-        if (normalized == L"prefer-creative")
-            return CreativePriorityMode::PreferCreative;
+        CreativePriorityMode parsed = CreativePriorityMode::Auto;
+        if (TryParseCreativePriorityMode(value, parsed))
+            return parsed;
+
         return CreativePriorityMode::Auto;
     }
 
@@ -253,11 +255,10 @@ namespace lrp::settings
 
     inline CreativePrivacyMode ParseCreativePrivacyMode(const std::wstring& value)
     {
-        auto normalized = NormalizeSettingValue(value);
-        if (normalized == L"app-only")
-            return CreativePrivacyMode::AppOnly;
-        if (normalized == L"private")
-            return CreativePrivacyMode::Private;
+        CreativePrivacyMode parsed = CreativePrivacyMode::Normal;
+        if (TryParseCreativePrivacyMode(value, parsed))
+            return parsed;
+
         return CreativePrivacyMode::Normal;
     }
 
@@ -300,9 +301,10 @@ namespace lrp::settings
 
     inline CreativeIdleBehavior ParseCreativeIdleBehavior(const std::wstring& value)
     {
-        auto normalized = NormalizeSettingValue(value);
-        if (normalized == L"clear-immediately" || normalized == L"clear" || normalized == L"fallback-media")
-            return CreativeIdleBehavior::ClearImmediately;
+        CreativeIdleBehavior parsed = CreativeIdleBehavior::HoldLast5Seconds;
+        if (TryParseCreativeIdleBehavior(value, parsed))
+            return parsed;
+
         return CreativeIdleBehavior::HoldLast5Seconds;
     }
 
@@ -347,11 +349,10 @@ namespace lrp::settings
 
     inline CreativeDetectionMode ParseCreativeDetectionMode(const std::wstring& value)
     {
-        auto normalized = NormalizeSettingValue(value);
-        if (normalized == L"foreground-only")
-            return CreativeDetectionMode::ForegroundOnly;
-        if (normalized == L"visible-window-only")
-            return CreativeDetectionMode::VisibleWindowOnly;
+        CreativeDetectionMode parsed = CreativeDetectionMode::ForegroundPreferredVisibleFallback;
+        if (TryParseCreativeDetectionMode(value, parsed))
+            return parsed;
+
         return CreativeDetectionMode::ForegroundPreferredVisibleFallback;
     }
 
@@ -397,11 +398,10 @@ namespace lrp::settings
 
     inline ProductiveDetectionMode ParseProductiveDetectionMode(const std::wstring& value)
     {
-        auto normalized = NormalizeSettingValue(value);
-        if (normalized == L"foreground-only")
-            return ProductiveDetectionMode::ForegroundOnly;
-        if (normalized == L"visible-window-only")
-            return ProductiveDetectionMode::VisibleWindowOnly;
+        ProductiveDetectionMode parsed = ProductiveDetectionMode::ForegroundPreferredVisibleFallback;
+        if (TryParseProductiveDetectionMode(value, parsed))
+            return parsed;
+
         return ProductiveDetectionMode::ForegroundPreferredVisibleFallback;
     }
 
@@ -437,11 +437,10 @@ namespace lrp::settings
 
     inline AppThemeMode ParseThemeMode(const std::wstring& value)
     {
-        auto normalized = NormalizeSettingValue(value);
-        if (normalized == L"light")
-            return AppThemeMode::Light;
-        if (normalized == L"dark")
-            return AppThemeMode::Dark;
+        AppThemeMode parsed = AppThemeMode::FollowSystem;
+        if (TryParseThemeMode(value, parsed))
+            return parsed;
+
         return AppThemeMode::FollowSystem;
     }
 
@@ -463,5 +462,179 @@ namespace lrp::settings
         case AppThemeMode::Dark: return L"Dark";
         default: return L"System";
         }
+    }
+
+    inline bool TryParseActivityTypeOverride(const std::wstring& value, int& parsedOut)
+    {
+        auto normalized = NormalizeSettingValue(value);
+        if (normalized.empty() || normalized == L"auto")
+        {
+            parsedOut = -1;
+            return true;
+        }
+
+        if (normalized == L"playing" || normalized == L"0")
+        {
+            parsedOut = 0;
+            return true;
+        }
+
+        if (normalized == L"listening" || normalized == L"2")
+        {
+            parsedOut = 2;
+            return true;
+        }
+
+        if (normalized == L"watching" || normalized == L"3")
+        {
+            parsedOut = 3;
+            return true;
+        }
+
+        if (normalized == L"competing" || normalized == L"5")
+        {
+            parsedOut = 5;
+            return true;
+        }
+
+        return false;
+    }
+
+    inline bool TryParseCreativePriorityMode(const std::wstring& value, CreativePriorityMode& parsedOut)
+    {
+        auto normalized = NormalizeSettingValue(value);
+        if (normalized.empty() || normalized == L"auto")
+        {
+            parsedOut = CreativePriorityMode::Auto;
+            return true;
+        }
+
+        if (normalized == L"prefer-media")
+        {
+            parsedOut = CreativePriorityMode::PreferMedia;
+            return true;
+        }
+
+        if (normalized == L"prefer-creative")
+        {
+            parsedOut = CreativePriorityMode::PreferCreative;
+            return true;
+        }
+
+        return false;
+    }
+
+    inline bool TryParseCreativePrivacyMode(const std::wstring& value, CreativePrivacyMode& parsedOut)
+    {
+        auto normalized = NormalizeSettingValue(value);
+        if (normalized.empty() || normalized == L"normal")
+        {
+            parsedOut = CreativePrivacyMode::Normal;
+            return true;
+        }
+
+        if (normalized == L"app-only")
+        {
+            parsedOut = CreativePrivacyMode::AppOnly;
+            return true;
+        }
+
+        if (normalized == L"private")
+        {
+            parsedOut = CreativePrivacyMode::Private;
+            return true;
+        }
+
+        return false;
+    }
+
+    inline bool TryParseCreativeIdleBehavior(const std::wstring& value, CreativeIdleBehavior& parsedOut)
+    {
+        auto normalized = NormalizeSettingValue(value);
+        if (normalized.empty() || normalized == L"hold-last-5s")
+        {
+            parsedOut = CreativeIdleBehavior::HoldLast5Seconds;
+            return true;
+        }
+
+        if (normalized == L"clear-immediately" || normalized == L"clear" || normalized == L"fallback-media")
+        {
+            parsedOut = CreativeIdleBehavior::ClearImmediately;
+            return true;
+        }
+
+        return false;
+    }
+
+    inline bool TryParseCreativeDetectionMode(const std::wstring& value, CreativeDetectionMode& parsedOut)
+    {
+        auto normalized = NormalizeSettingValue(value);
+        if (normalized.empty() || normalized == L"foreground-preferred-visible-fallback")
+        {
+            parsedOut = CreativeDetectionMode::ForegroundPreferredVisibleFallback;
+            return true;
+        }
+
+        if (normalized == L"foreground-only")
+        {
+            parsedOut = CreativeDetectionMode::ForegroundOnly;
+            return true;
+        }
+
+        if (normalized == L"visible-window-only")
+        {
+            parsedOut = CreativeDetectionMode::VisibleWindowOnly;
+            return true;
+        }
+
+        return false;
+    }
+
+    inline bool TryParseProductiveDetectionMode(const std::wstring& value, ProductiveDetectionMode& parsedOut)
+    {
+        auto normalized = NormalizeSettingValue(value);
+        if (normalized.empty() || normalized == L"foreground-preferred-visible-fallback")
+        {
+            parsedOut = ProductiveDetectionMode::ForegroundPreferredVisibleFallback;
+            return true;
+        }
+
+        if (normalized == L"foreground-only")
+        {
+            parsedOut = ProductiveDetectionMode::ForegroundOnly;
+            return true;
+        }
+
+        if (normalized == L"visible-window-only")
+        {
+            parsedOut = ProductiveDetectionMode::VisibleWindowOnly;
+            return true;
+        }
+
+        return false;
+    }
+
+    inline bool TryParseThemeMode(const std::wstring& value, AppThemeMode& parsedOut)
+    {
+        auto normalized = NormalizeSettingValue(value);
+        if (normalized.empty() || normalized == L"system")
+        {
+            parsedOut = AppThemeMode::FollowSystem;
+            return true;
+        }
+
+        if (normalized == L"light")
+        {
+            parsedOut = AppThemeMode::Light;
+            return true;
+        }
+
+        if (normalized == L"dark")
+        {
+            parsedOut = AppThemeMode::Dark;
+            return true;
+        }
+
+        return false;
     }
 }

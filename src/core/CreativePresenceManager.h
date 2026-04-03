@@ -31,6 +31,7 @@ public:
     void Initialize();
     void Shutdown();
     bool IsConnected() const;
+    DiscordRpcStatus GetTransportStatus() const;
 
     void UpdateCreativeActivity(const CreativeActivityInfo& info, const CreativePresenceOptions& options);
     void ClearCreativeActivity();

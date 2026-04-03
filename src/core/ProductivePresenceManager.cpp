@@ -48,6 +48,12 @@ bool ProductivePresenceManager::IsConnected() const
     return m_initialized && m_discord.IsConnected();
 }
 
+DiscordRpcStatus ProductivePresenceManager::GetTransportStatus() const
+{
+    std::lock_guard lock(m_mutex);
+    return m_discord.GetStatus();
+}
+
 std::string ProductivePresenceManager::WideToUtf8(const std::wstring& wide)
 {
     return lrp::WideToUtf8(wide);
@@ -120,7 +126,7 @@ void ProductivePresenceManager::UpdateProductiveActivity(const ProductiveActivit
         ? options.activityTypeOverride
         : 5;
     presence.playing = true;
-    presence.targetPid = info.processId;
+    presence.targetPid = lrp::ResolveRpcTargetPidForDetectedActivity(info.processId);
     presence.name = "Work Session";
     presence.details = ClampWideField(details, 96);
     presence.state = ClampWideField(state, 96);
