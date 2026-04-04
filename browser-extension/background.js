@@ -1,13 +1,12 @@
-const ENDPOINTS = [
-  "http://127.0.0.1:32145/v1/browser-hint",
-  "http://localhost:32145/v1/browser-hint"
-];
-
+const HOST_NAME = "com.lastprojects.lastrichpresence";
 const STALE_AFTER_MS = 30000;
 const HEARTBEAT_MS = 1500;
 const RESEND_AFTER_MS = 2000;
 const CLEAR_DEBOUNCE_MS = 2500;
-const AUTH_TOKEN_TTL_MS = 10 * 60 * 1000;
+const RECONNECT_BASE_MS = 1000;
+const RECONNECT_MAX_MS = 15000;
+const NATIVE_RESPONSE_TIMEOUT_MS = 5000;
+const RECONNECT_ALARM_NAME = "lrp-native-reconnect";
 
 const DEFAULT_SETTINGS = {
   enabled: true,
@@ -34,22 +33,37 @@ const SUPPORTED_HOST_PATTERN = /(^|\.)(youtube\.com|youtu\.be|open\.spotify\.com
 
 const latestByTab = new Map();
 const clearTimersByTab = new Map();
-const authTokenCache = new Map();
 
 let settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+let settingsReady = null;
 let lastSignature = "";
 let lastSentAt = 0;
+let nativePort = null;
+let nativePortConnected = false;
+let nativeConnectPromise = null;
+let reconnectTimerId = null;
+let reconnectDelayMs = RECONNECT_BASE_MS;
+let pendingNativeResponse = null;
+let nativeSendChain = Promise.resolve(true);
 
 const runtimeStatus = {
-  lastPostAt: 0,
-  lastPostOk: false,
+  nativeHostName: HOST_NAME,
+  registrationState: "unknown",
+  connectionState: "disconnected",
+  lastSendResult: "never",
+  lastSendOk: false,
+  lastSendAt: 0,
   lastError: "",
   lastHintService: "",
   activeHints: 0
 };
 
+function cloneDefaultSettings() {
+  return JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+}
+
 function normalizeSettings(input) {
-  const merged = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+  const merged = cloneDefaultSettings();
 
   if (input && typeof input === "object") {
     if (typeof input.enabled === "boolean") {
@@ -63,7 +77,6 @@ function normalizeSettings(input) {
         }
       }
 
-      // Backward compatibility with older popup keys.
       if (typeof input.siteEnabled.youtubeMusic === "boolean") {
         merged.siteEnabled.youtube_music = input.siteEnabled.youtubeMusic;
       }
@@ -76,6 +89,16 @@ function normalizeSettings(input) {
 async function loadSettings() {
   const stored = await chrome.storage.sync.get(["lrpSettings"]);
   settings = normalizeSettings(stored.lrpSettings);
+}
+
+function ensureSettingsLoaded() {
+  if (!settingsReady) {
+    settingsReady = loadSettings().catch(() => {
+      settings = cloneDefaultSettings();
+    });
+  }
+
+  return settingsReady;
 }
 
 async function saveSettings() {
@@ -135,6 +158,7 @@ function pruneStaleHints() {
       latestByTab.delete(tabId);
     }
   }
+
   runtimeStatus.activeHints = latestByTab.size;
 }
 
@@ -178,99 +202,9 @@ function chooseBestHint() {
   return best;
 }
 
-async function postToEndpoint(payload) {
-  for (const endpoint of ENDPOINTS) {
-    const tokenEndpoint = endpoint.replace("/v1/browser-hint", "/v1/browser-hint/token");
-
-    async function fetchToken(forceRefresh) {
-      const cached = authTokenCache.get(endpoint);
-      const now = Date.now();
-      if (!forceRefresh && cached && cached.token && now - cached.fetchedAt < AUTH_TOKEN_TTL_MS) {
-        return cached.token;
-      }
-
-      try {
-        const tokenResponse = await fetch(tokenEndpoint, {
-          method: "GET",
-          headers: { "x-lrp-extension": "1" },
-          cache: "no-store"
-        });
-
-        if (!tokenResponse.ok) {
-          return "";
-        }
-
-        const tokenPayload = await tokenResponse.json();
-        const token = typeof tokenPayload.token === "string" ? tokenPayload.token : "";
-        if (!token) return "";
-
-        authTokenCache.set(endpoint, { token, fetchedAt: now });
-        return token;
-      } catch {
-        return "";
-      }
-    }
-
-    try {
-      let token = await fetchToken(false);
-      if (!token) continue;
-
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-lrp-extension": "1",
-          "x-lrp-token": token
-        },
-        body: JSON.stringify(payload),
-        keepalive: true
-      });
-
-      if (response.status === 401) {
-        token = await fetchToken(true);
-        if (!token) continue;
-
-        const retry = await fetch(endpoint, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-lrp-extension": "1",
-            "x-lrp-token": token
-          },
-          body: JSON.stringify(payload),
-          keepalive: true
-        });
-
-        if (retry.ok) {
-          runtimeStatus.lastPostAt = Date.now();
-          runtimeStatus.lastPostOk = true;
-          runtimeStatus.lastError = "";
-          return true;
-        }
-
-        if (retry.status === 401) {
-          authTokenCache.delete(endpoint);
-        }
-      }
-
-      if (response.ok) {
-        runtimeStatus.lastPostAt = Date.now();
-        runtimeStatus.lastPostOk = true;
-        runtimeStatus.lastError = "";
-        return true;
-      }
-    } catch (error) {
-      runtimeStatus.lastPostAt = Date.now();
-      runtimeStatus.lastPostOk = false;
-      runtimeStatus.lastError = String(error || "post-failed");
-    }
-  }
-
-  return false;
-}
-
 function buildOutboundPayload() {
   if (!settings.enabled) {
+    runtimeStatus.lastHintService = "";
     return {
       kind: "clear",
       source: "lrp-browser-extension",
@@ -315,6 +249,277 @@ function buildOutboundPayload() {
   };
 }
 
+function normalizeError(errorValue) {
+  const rawValue =
+    errorValue && typeof errorValue === "object" && typeof errorValue.message === "string"
+      ? errorValue.message
+      : errorValue;
+  const text = String(rawValue || "").trim();
+  if (!text) {
+    return "";
+  }
+
+  const lower = text.toLowerCase();
+  if (
+    lower.includes("native messaging host not found") ||
+    lower.includes("specified native messaging host not found") ||
+    lower.includes("host not found")
+  ) {
+    return "native-host-not-found";
+  }
+
+  if (lower.includes("access denied")) {
+    return "blocked";
+  }
+
+  if (
+    lower.includes("forbidden") ||
+    lower.includes("not allowed") ||
+    lower.includes("allowed_origins") ||
+    lower.includes("allowed origins")
+  ) {
+    return "blocked";
+  }
+
+  if (
+    lower.includes("failed to start native messaging host") ||
+    lower.includes("native host has exited")
+  ) {
+    return "native-host-launch-failed";
+  }
+
+  if (lower.includes("app-not-running")) {
+    return "app-not-running";
+  }
+
+  return text;
+}
+
+function updateRegistrationState(errorValue) {
+  const normalized = normalizeError(errorValue);
+  if (normalized === "native-host-not-found") {
+    runtimeStatus.registrationState = "not-registered";
+    return;
+  }
+
+  if (normalized === "blocked") {
+    runtimeStatus.registrationState = "blocked";
+    return;
+  }
+
+  if (nativePortConnected) {
+    runtimeStatus.registrationState = "registered";
+  }
+}
+
+function clearReconnectTimer() {
+  if (reconnectTimerId) {
+    clearTimeout(reconnectTimerId);
+    reconnectTimerId = null;
+  }
+}
+
+function clearReconnectSchedule() {
+  clearReconnectTimer();
+
+  try {
+    chrome.alarms.clear(RECONNECT_ALARM_NAME);
+  } catch {
+    // Ignore alarm cleanup failures in restricted browsers/tests.
+  }
+}
+
+function scheduleReconnect(delayMs = reconnectDelayMs) {
+  if (reconnectTimerId) {
+    return;
+  }
+
+  const delay = Math.max(0, delayMs);
+  reconnectTimerId = setTimeout(() => {
+    reconnectTimerId = null;
+    void ensureNativePort();
+  }, delay);
+
+  try {
+    chrome.alarms.create(RECONNECT_ALARM_NAME, {
+      when: Date.now() + delay
+    });
+  } catch {
+    // Ignore alarm scheduling failures and keep the in-memory timer path.
+  }
+}
+
+function resolvePendingNativeResponse(response) {
+  const pending = pendingNativeResponse;
+  pendingNativeResponse = null;
+  if (pending) {
+    clearTimeout(pending.timeoutId);
+    pending.resolve(response);
+  }
+}
+
+function setDisconnectedState(errorValue) {
+  nativePortConnected = false;
+  nativePort = null;
+  runtimeStatus.connectionState = "disconnected";
+
+  const normalized = normalizeError(errorValue);
+  if (normalized) {
+    runtimeStatus.lastError = normalized;
+  }
+
+  updateRegistrationState(normalized);
+}
+
+function handleNativeHostMessage(message) {
+  resolvePendingNativeResponse(message || { ok: false, error: "empty-response" });
+}
+
+function handleNativeHostDisconnect() {
+  const lastErrorMessage = chrome.runtime.lastError ? chrome.runtime.lastError.message : "native-host-disconnected";
+  const normalized = normalizeError(lastErrorMessage) || "native-host-disconnected";
+  resolvePendingNativeResponse({ ok: false, error: normalized });
+  setDisconnectedState(normalized);
+  reconnectDelayMs = Math.min(RECONNECT_MAX_MS, reconnectDelayMs * 2);
+  scheduleReconnect();
+}
+
+async function connectNativePort() {
+  if (nativePortConnected && nativePort) {
+    return true;
+  }
+
+  if (nativeConnectPromise) {
+    return nativeConnectPromise;
+  }
+
+  nativeConnectPromise = new Promise((resolve) => {
+    clearReconnectSchedule();
+    runtimeStatus.connectionState = "connecting";
+
+    try {
+      const port = chrome.runtime.connectNative(HOST_NAME);
+      nativePort = port;
+      nativePortConnected = true;
+      runtimeStatus.connectionState = "waiting";
+      runtimeStatus.lastError = "";
+      runtimeStatus.registrationState = "registered";
+      reconnectDelayMs = RECONNECT_BASE_MS;
+      clearReconnectSchedule();
+
+      port.onMessage.addListener(handleNativeHostMessage);
+      port.onDisconnect.addListener(handleNativeHostDisconnect);
+      resolve(true);
+    } catch (error) {
+      const normalized = normalizeError(error) || "native-host-connect-failed";
+      runtimeStatus.lastError = normalized;
+      runtimeStatus.lastSendOk = false;
+      setDisconnectedState(normalized);
+      scheduleReconnect();
+      resolve(false);
+    } finally {
+      nativeConnectPromise = null;
+    }
+  });
+
+  return nativeConnectPromise;
+}
+
+async function ensureNativePort() {
+  if (nativePortConnected && nativePort) {
+    return true;
+  }
+
+  return connectNativePort();
+}
+
+async function sendNativePayload(payload) {
+  const connected = await ensureNativePort();
+  if (!connected || !nativePort) {
+    runtimeStatus.lastSendAt = Date.now();
+    runtimeStatus.lastSendOk = false;
+    runtimeStatus.lastSendResult = runtimeStatus.lastError || "native-host-unavailable";
+    if (!runtimeStatus.lastError) {
+      runtimeStatus.lastError = "native-host-unavailable";
+    }
+    return false;
+  }
+
+  const responsePromise = new Promise((resolve) => {
+    const timeoutId = setTimeout(() => {
+      if (!pendingNativeResponse || pendingNativeResponse.timeoutId !== timeoutId) {
+        return;
+      }
+
+      pendingNativeResponse = null;
+      resolve({ ok: false, error: "native-host-timeout" });
+    }, NATIVE_RESPONSE_TIMEOUT_MS);
+
+    pendingNativeResponse = { resolve, timeoutId };
+  });
+
+  try {
+    nativePort.postMessage(payload);
+  } catch (error) {
+    pendingNativeResponse = null;
+    const normalized = normalizeError(error) || "native-host-post-failed";
+    runtimeStatus.lastSendAt = Date.now();
+    runtimeStatus.lastSendOk = false;
+    runtimeStatus.lastSendResult = normalized;
+    runtimeStatus.lastError = normalized;
+    setDisconnectedState(normalized);
+    scheduleReconnect();
+    return false;
+  }
+
+  const response = await responsePromise;
+  runtimeStatus.lastSendAt = Date.now();
+
+  if (response && response.ok) {
+    runtimeStatus.lastSendOk = true;
+    runtimeStatus.lastSendResult = "ok";
+    runtimeStatus.lastError = "";
+    runtimeStatus.connectionState = "connected";
+    runtimeStatus.registrationState = "registered";
+    reconnectDelayMs = RECONNECT_BASE_MS;
+    return true;
+  }
+
+  const normalized = normalizeError(response && response.error ? response.error : "native-host-error") || "native-host-error";
+  runtimeStatus.lastSendOk = false;
+  runtimeStatus.lastSendResult = normalized;
+  runtimeStatus.lastError = normalized;
+  runtimeStatus.connectionState = normalized === "app-not-running" ? "disconnected" : "waiting";
+  updateRegistrationState(normalized);
+
+  if (normalized === "native-host-timeout") {
+    try {
+      if (nativePort) {
+        nativePort.disconnect();
+      }
+    } catch {
+      // Ignore disconnect failures; the reconnect path still runs.
+    }
+
+    setDisconnectedState(normalized);
+  }
+
+  if (normalized !== "app-not-running") {
+    reconnectDelayMs = Math.min(RECONNECT_MAX_MS, reconnectDelayMs * 2);
+    scheduleReconnect(reconnectDelayMs);
+  }
+
+  return false;
+}
+
+function enqueueNativeSend(payload) {
+  nativeSendChain = nativeSendChain
+    .catch(() => true)
+    .then(() => sendNativePayload(payload));
+
+  return nativeSendChain;
+}
+
 async function forwardHint(force = false) {
   const payload = buildOutboundPayload();
   const signature = JSON.stringify(payload);
@@ -324,18 +529,22 @@ async function forwardHint(force = false) {
     return;
   }
 
-  await postToEndpoint(payload);
+  await enqueueNativeSend(payload);
   lastSignature = signature;
   lastSentAt = now;
 }
 
 function getPopupState() {
   pruneStaleHints();
+
+  if (!nativePortConnected && !nativeConnectPromise) {
+    scheduleReconnect(0);
+  }
+
   return {
     settings,
     runtimeStatus: {
-      ...runtimeStatus,
-      endpoint: ENDPOINTS[0]
+      ...runtimeStatus
     }
   };
 }
@@ -346,6 +555,7 @@ function isSupportedUrl(urlValue) {
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       return false;
     }
+
     return SUPPORTED_HOST_PATTERN.test(parsed.hostname.toLowerCase());
   } catch {
     return false;
@@ -377,14 +587,31 @@ async function injectIntoOpenTabs() {
   }
 }
 
-chrome.runtime.onInstalled.addListener(async () => {
-  await loadSettings();
-  await saveSettings();
-  await injectIntoOpenTabs();
+chrome.runtime.onInstalled.addListener(() => {
+  void ensureSettingsLoaded().then(async () => {
+    await saveSettings();
+    await injectIntoOpenTabs();
+    scheduleReconnect(0);
+  });
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  void injectIntoOpenTabs();
+  void ensureSettingsLoaded().then(async () => {
+    await injectIntoOpenTabs();
+    scheduleReconnect(0);
+  });
+});
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (!alarm || alarm.name !== RECONNECT_ALARM_NAME) {
+    return;
+  }
+
+  void ensureNativePort().then((connected) => {
+    if (connected) {
+      void forwardHint(true);
+    }
+  });
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
@@ -393,17 +620,16 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
-void loadSettings();
-
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message && message.type === "lrp-popup-get-state") {
-    sendResponse(getPopupState());
-    return;
-  }
+  void ensureSettingsLoaded().then(async () => {
+    if (message && message.type === "lrp-popup-get-state") {
+      sendResponse(getPopupState());
+      return;
+    }
 
-  if (message && message.type === "lrp-popup-set-settings") {
-    settings = normalizeSettings(message.settings);
-    void saveSettings().then(async () => {
+    if (message && message.type === "lrp-popup-set-settings") {
+      settings = normalizeSettings(message.settings);
+      await saveSettings();
       pruneStaleHints();
 
       if (!settings.enabled) {
@@ -419,44 +645,55 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       await forwardHint(true);
       sendResponse(getPopupState());
-    });
-    return true;
-  }
-
-  const tabId = sender.tab && sender.tab.id;
-  if (!tabId) return;
-
-  if (message && message.type === "lrp-media-state" && message.payload) {
-    cancelPendingClear(tabId);
-
-    if (!settings.enabled || !isHintAllowed(message.payload)) {
-      latestByTab.delete(tabId);
-      runtimeStatus.activeHints = latestByTab.size;
-      void forwardHint(true);
       return;
     }
 
-    latestByTab.set(tabId, {
-      ...message.payload,
-      tabId,
-      timestamp: Date.now()
-    });
-    runtimeStatus.activeHints = latestByTab.size;
-    void forwardHint(false);
-    return;
-  }
+    const tabId = sender.tab && sender.tab.id;
+    if (!tabId) {
+      sendResponse(null);
+      return;
+    }
 
-  if (message && message.type === "lrp-media-state-clear") {
-    cancelPendingClear(tabId);
-    const timer = setTimeout(() => {
-      clearTimersByTab.delete(tabId);
-      latestByTab.delete(tabId);
+    if (message && message.type === "lrp-media-state" && message.payload) {
+      cancelPendingClear(tabId);
+
+      if (!settings.enabled || !isHintAllowed(message.payload)) {
+        latestByTab.delete(tabId);
+        runtimeStatus.activeHints = latestByTab.size;
+        await forwardHint(true);
+        sendResponse(null);
+        return;
+      }
+
+      latestByTab.set(tabId, {
+        ...message.payload,
+        tabId,
+        timestamp: Date.now()
+      });
       runtimeStatus.activeHints = latestByTab.size;
-      void forwardHint(true);
-    }, CLEAR_DEBOUNCE_MS);
+      await forwardHint(false);
+      sendResponse(null);
+      return;
+    }
 
-    clearTimersByTab.set(tabId, timer);
-  }
+    if (message && message.type === "lrp-media-state-clear") {
+      cancelPendingClear(tabId);
+      const timer = setTimeout(() => {
+        clearTimersByTab.delete(tabId);
+        latestByTab.delete(tabId);
+        runtimeStatus.activeHints = latestByTab.size;
+        void forwardHint(true);
+      }, CLEAR_DEBOUNCE_MS);
+
+      clearTimersByTab.set(tabId, timer);
+      sendResponse(null);
+      return;
+    }
+
+    sendResponse(null);
+  });
+
+  return true;
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
@@ -464,6 +701,10 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   latestByTab.delete(tabId);
   runtimeStatus.activeHints = latestByTab.size;
   void forwardHint(true);
+});
+
+void ensureSettingsLoaded().then(() => {
+  scheduleReconnect(0);
 });
 
 setInterval(() => {

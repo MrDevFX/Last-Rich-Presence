@@ -11,7 +11,16 @@
 #include "CreativePresenceManager.h"
 #include "ProductiveDetector.h"
 #include "ProductivePresenceManager.h"
+#include "AppPage.h"
+#include "PageModels.h"
+#include "WindowTrayController.h"
+#include "HomePageControl.xaml.h"
+#include "MusicPageControl.xaml.h"
+#include "ProductivityPageControl.xaml.h"
+#include "CreativePageControl.xaml.h"
+#include "SettingsPageControl.xaml.h"
 
+#include <optional>
 #include <vector>
 
 namespace winrt::Last_Rich_Presence::implementation
@@ -24,63 +33,9 @@ namespace winrt::Last_Rich_Presence::implementation
         void InitWindow();
         void HandleRedirectedActivation();
 
-        // XAML event handlers
-        void OnEnableToggled(winrt::Windows::Foundation::IInspectable const& sender,
-                             winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
+        // Shell event handlers
         void OnNavSelectionChanged(winrt::Microsoft::UI::Xaml::Controls::NavigationView const& sender,
                                    winrt::Microsoft::UI::Xaml::Controls::NavigationViewSelectionChangedEventArgs const& args);
-        void OnTimestampToggled(winrt::Windows::Foundation::IInspectable const& sender,
-                                winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
-        void OnSourceToggled(winrt::Windows::Foundation::IInspectable const& sender,
-                             winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
-        void OnSourceDebugToggled(winrt::Windows::Foundation::IInspectable const& sender,
-                                  winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
-        void OnPausedToggled(winrt::Windows::Foundation::IInspectable const& sender,
-                             winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
-        void OnAlbumArtToggled(winrt::Windows::Foundation::IInspectable const& sender,
-                               winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
-        void OnDefaultIdleStatusToggled(winrt::Windows::Foundation::IInspectable const& sender,
-                                        winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
-        void OnCloseToTrayToggled(winrt::Windows::Foundation::IInspectable const& sender,
-                                  winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
-        void OnLaunchOnStartupToggled(winrt::Windows::Foundation::IInspectable const& sender,
-                                      winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
-        void OnStartMinimizedToggled(winrt::Windows::Foundation::IInspectable const& sender,
-                                     winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
-        void OnTrayLeftClickToggleToggled(winrt::Windows::Foundation::IInspectable const& sender,
-                                          winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
-        void OnSensitiveKeywordFilterToggled(winrt::Windows::Foundation::IInspectable const& sender,
-                                             winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
-        void OnStrictBrowserPrivacyToggled(winrt::Windows::Foundation::IInspectable const& sender,
-                                           winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
-        void OnSuppressBrowserArtToggled(winrt::Windows::Foundation::IInspectable const& sender,
-                                         winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
-        void OnThemeSelectionChanged(winrt::Windows::Foundation::IInspectable const& sender,
-                                     winrt::Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const& e);
-        void OnActivityTypeSelectionChanged(winrt::Windows::Foundation::IInspectable const& sender,
-                                            winrt::Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const& e);
-        void OnProductiveToggleChanged(winrt::Windows::Foundation::IInspectable const& sender,
-                                       winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
-        void OnProductiveMetadataToggled(winrt::Windows::Foundation::IInspectable const& sender,
-                                         winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
-        void OnProductiveSelectionChanged(winrt::Windows::Foundation::IInspectable const& sender,
-                                          winrt::Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const& e);
-        void OnProductiveAppFilterToggled(winrt::Windows::Foundation::IInspectable const& sender,
-                                          winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
-        void OnProductiveSelectAllAppsClicked(winrt::Windows::Foundation::IInspectable const& sender,
-                                              winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
-        void OnProductiveDeselectAllAppsClicked(winrt::Windows::Foundation::IInspectable const& sender,
-                                                winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
-        void OnCreativeToggleChanged(winrt::Windows::Foundation::IInspectable const& sender,
-                                     winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
-        void OnCreativeSelectionChanged(winrt::Windows::Foundation::IInspectable const& sender,
-                                        winrt::Microsoft::UI::Xaml::Controls::SelectionChangedEventArgs const& e);
-        void OnCreativeAppFilterToggled(winrt::Windows::Foundation::IInspectable const& sender,
-                                        winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
-        void OnCreativeSelectAllAppsClicked(winrt::Windows::Foundation::IInspectable const& sender,
-                                            winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
-        void OnCreativeDeselectAllAppsClicked(winrt::Windows::Foundation::IInspectable const& sender,
-                                              winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
         void OnClearDiagnosticsClicked(winrt::Windows::Foundation::IInspectable const& sender,
                                        winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
         void OnExportDiagnosticsJsonClicked(winrt::Windows::Foundation::IInspectable const& sender,
@@ -91,22 +46,49 @@ namespace winrt::Last_Rich_Presence::implementation
                                          winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
         void OnImportSettingsJsonClicked(winrt::Windows::Foundation::IInspectable const& sender,
                                          winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
-        void OnApplyBlockedAppSitesClicked(winrt::Windows::Foundation::IInspectable const& sender,
-                                           winrt::Microsoft::UI::Xaml::RoutedEventArgs const& e);
 
     private:
+        implementation::HomePageControl* HomePageControlImpl();
+        implementation::MusicPageControl* MusicPageControlImpl();
+        implementation::ProductivityPageControl* ProductivityPageControlImpl();
+        implementation::CreativePageControl* CreativePageControlImpl();
+        implementation::SettingsPageControl* SettingsPageControlImpl();
+        winrt::Microsoft::UI::Xaml::FrameworkElement PageHost(lrp::ui::AppPage page);
+        winrt::Microsoft::UI::Xaml::Controls::NavigationViewItem NavItemForPage(lrp::ui::AppPage page);
+        void ShowOnlyPage(lrp::ui::AppPage page);
+        void ResetPageScrollPosition(lrp::ui::AppPage page);
+        void ConfigurePageControlCallbacks();
+        void InitializeShellNavigation();
+        void HandleHomeEnableToggled(bool enabled);
+        void HandleMusicSettingsChanged(lrp::ui::MusicPageSettings const& settings);
+        void HandleProductivitySettingsChanged(lrp::ui::ProductivityPageSettings const& settings);
+        void HandleProductivitySelectAll();
+        void HandleProductivityDeselectAll();
+        void HandleCreativeSettingsChanged(lrp::ui::CreativePageSettings const& settings);
+        void HandleCreativeSelectAll();
+        void HandleCreativeDeselectAll();
+        void HandleSettingsPageSettingsChanged(lrp::ui::SettingsPageSettings const& settings);
+        void HandleApplyBlockedTerms(winrt::hstring const& blockedTermsRaw);
+        void InitializeRuntimeComponents();
+        void InitializeWindowChromeAndTray();
+        void ApplyInitialSettingsAndVisibility();
+        void RegisterRuntimeCallbacks();
+        void StartRuntimeServices();
+        void SyncMusicSettingsFromControls();
+        void SyncShellSettingsFromControls();
+        lrp::ui::MusicPageState BuildMusicPageState(const MediaInfo& info, int positionSeconds = -1, int durationSeconds = -1);
+        lrp::ui::ProductivityPageState BuildProductivityPageState(const ProductiveActivityInfo& info);
+        lrp::ui::CreativePageState BuildCreativePageState(const CreativeActivityInfo& info);
+        lrp::ui::HomePageState BuildHomePageState(int positionSeconds = -1, int durationSeconds = -1);
         void ApplyGlobalEnableRuntimeState();
         void ShutdownWindow();
         void InitializeSystemTray();
         void CleanupSystemTray();
-        void ShowTrayContextMenu();
         void ShowWindowFromTray();
         void HideWindowToTray();
         void ToggleWindowVisibilityFromTray();
-        void ApplyLaunchOnStartupState(bool enabled, bool userInitiated);
-        void HandleTrayMenuCommand(uint32_t commandId);
-        bool TryHandleTrayWindowMessage(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result);
-        static LRESULT CALLBACK TrayWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
+        void ApplyLaunchOnStartupState(bool enabled, bool userInitiated, bool persistSettings = true);
+        void HandleTrayMenuCommand(lrp::ui::TrayMenuCommand command);
         void OnMediaChanged(const MediaInfo& info);
         void OnProductiveActivityChanged(const ProductiveActivityInfo& info);
         void OnCreativeActivityChanged(const CreativeActivityInfo& info);
@@ -120,10 +102,7 @@ namespace winrt::Last_Rich_Presence::implementation
         void UpdateHomeCreativePreview();
         void SyncProductiveSettingsFromControls();
         void SyncCreativeSettingsFromControls();
-        void SyncActivityTypeOverridesFromControls();
         void ApplyActivityTypeOverrides();
-        void SetAllProductiveAppFilterChecks(bool enabled);
-        void SetAllCreativeAppFilterChecks(bool enabled);
         void ApplyCreativeDetectorRuntimeState();
         void RefreshCreativePreviewFromCurrentState();
         bool IsProductiveAppEnabled(const ProductiveActivityInfo& info) const;
@@ -197,9 +176,6 @@ namespace winrt::Last_Rich_Presence::implementation
         bool m_sourceDebugMode{false};
         bool m_isShuttingDown{false};
         bool m_exitRequested{false};
-        bool m_hiddenToTray{false};
-        bool m_trayIconAdded{false};
-        bool m_trayIconOwned{false};
         bool m_closeToTrayOnClose{true};
         bool m_launchOnStartup{false};
         bool m_startMinimizedToTray{false};
@@ -254,17 +230,15 @@ namespace winrt::Last_Rich_Presence::implementation
         CreativePrivacyMode m_creativePrivacyMode{CreativePrivacyMode::Normal};
         CreativeIdleBehavior m_creativeIdleBehavior{CreativeIdleBehavior::HoldLast5Seconds};
         std::wstring m_blockedAppSiteTermsRaw;
-        std::chrono::steady_clock::time_point m_lastTrayToggleAt{};
         std::chrono::steady_clock::time_point m_lastCreativeActiveSeenAt{};
-        HWND m_windowHandle{ nullptr };
-        WNDPROC m_originalWndProc{ nullptr };
-        HICON m_trayIconHandle{ nullptr };
+        lrp::settings::PersistedSettings m_settings{};
+        lrp::ui::WindowTrayController m_trayController;
         lrp::DiagnosticsLog m_diagnosticLog;
         std::wstring m_lastMergeState;
         std::wstring m_lastUiTrackKey;
         std::wstring m_lastUiSourceKey;
-        std::wstring m_activePageTag{L"Home"};
-        std::wstring m_queuedPageTag;
+        lrp::ui::AppPage m_activePage{lrp::ui::AppPage::Home};
+        std::optional<lrp::ui::AppPage> m_queuedPage;
         bool m_pageTransitionInProgress{false};
         CreativeActivityInfo m_lastCreativeAcceptedActivity;
         lrp::ActivityLaneState m_productiveLaneState;
@@ -273,6 +247,8 @@ namespace winrt::Last_Rich_Presence::implementation
         bool m_lastPresencePushPlaying{false};
         bool m_reduceMotionRequested{false};
         uint64_t m_connectionInfoBarVersion{0};
+        uint64_t m_launchOnStartupRequestVersion{0};
+        bool m_windowInitialized{false};
     };
 }
 

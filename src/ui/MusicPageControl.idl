@@ -1,0 +1,8 @@
+namespace Last_Rich_Presence
+{
+    [default_interface]
+    runtimeclass MusicPageControl : Microsoft.UI.Xaml.Controls.UserControl
+    {
+        MusicPageControl();
+    }
+}

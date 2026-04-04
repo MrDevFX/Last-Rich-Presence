@@ -1,37 +1,41 @@
-# Visual Studio
 .vs/
-*.user
-*.suo
-*.VC.db
-
-# Build output
+Generated Files/
 x64/
 x86/
 ARM64/
-Debug/
-Release/
-Generated Files/
-Last Ric.*/
-*.ipch
-*.pdb
-*.ilk
-*.obj
-*.idb
-
-# MSIX/Appx output
 AppPackages/
-BundleArtifacts/
-
-# Logs and temp
-*.log
-*.tmp
-
-# Local packaged extension artifact
-browser-extension.zip
-
-# Test project build output
+dist/
+Last Ric.bc48f16e/
+packages/
+browser-extension/node_modules/
 tests/**/bin/
 tests/**/obj/
 
-# NuGet package cache in legacy layout
-packages/
+*.VC.db
+*.VC.VC.opendb
+*.opendb
+*.sdf
+*.suo
+*.user
+*.ncb
+*.aps
+*.ilk
+*.ipch
+*.tlog
+*.lastbuildstate
+*.recipe
+*.iobj
+*.ipdb
+*.pdb
+*.obj
+*.idb
+*.cachefile
+*.appxupload
+*.msix
+*.msixbundle
+*.msixupload
+*.appinstaller
+*_TemporaryKey.pfx
+
+bin/
+obj/

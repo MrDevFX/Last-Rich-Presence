@@ -1,0 +1,8 @@
+namespace Last_Rich_Presence
+{
+    [default_interface]
+    runtimeclass ProductivityPageControl : Microsoft.UI.Xaml.Controls.UserControl
+    {
+        ProductivityPageControl();
+    }
+}

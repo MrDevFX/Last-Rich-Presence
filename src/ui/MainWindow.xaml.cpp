@@ -1,16 +1,17 @@
 #include "pch.h"
 #include "MainWindow.xaml.h"
+#include "BrowserNativeMessaging.h"
 #include "SettingsImport.h"
 #include "SettingsModels.h"
 #include "SettingsStore.h"
+#include "SettingsUiBinder.h"
 #include "StartupRegistration.h"
 #include "TextUtilities.h"
+#include "WindowTrayController.h"
 #if __has_include("MainWindow.g.cpp")
 #include "MainWindow.g.cpp"
 #endif
 
-#include <winrt/Windows.Networking.h>
-#include <winrt/Windows.Networking.Sockets.h>
 #include <winrt/Windows.Data.Json.h>
 #include <winrt/Windows.UI.ViewManagement.h>
 #include <winrt/Windows.Storage.FileProperties.h>
@@ -27,9 +28,11 @@
 #include <functional>
 #include <iomanip>
 #include <iterator>
+#include <limits>
 #include <mutex>
-#include <random>
+#include <optional>
 #include <stdexcept>
+#include <thread>
 #include <unordered_map>
 
 #pragma comment(lib, "shell32.lib")
@@ -41,8 +44,6 @@ using namespace Microsoft::UI::Xaml::Media;
 using namespace Microsoft::UI::Xaml::Media::Imaging;
 using namespace Windows::Foundation;
 using namespace Windows::Data::Json;
-using namespace Windows::Networking;
-using namespace Windows::Networking::Sockets;
 using namespace Windows::UI;
 using namespace Windows::Storage::Streams;
 
@@ -96,34 +97,13 @@ namespace
         return ease;
     }
 
-    constexpr UINT kTrayCallbackMessage = WM_APP + 0x52;
-    constexpr UINT kTrayIconId = 1;
-    constexpr uint32_t kTrayMenuShowHide = 31001;
-    constexpr uint32_t kTrayMenuTogglePresence = 31002;
-    constexpr uint32_t kTrayMenuExit = 31003;
     constexpr wchar_t kSettingsExportFileName[] = L"settings-export.json";
     constexpr wchar_t kStartupTaskId[] = L"LastRichPresenceStartupTask";
     constexpr wchar_t kStartMinimizedArgument[] = L"--start-minimized";
     constexpr int32_t kDefaultWindowWidth = 1230;
     constexpr int32_t kDefaultWindowHeight = 845;
-
-    struct TrayWindowState
-    {
-        winrt::Last_Rich_Presence::implementation::MainWindow* window{ nullptr };
-        WNDPROC originalWndProc{ nullptr };
-    };
-
-    std::mutex& GetTrayWindowStateMutex()
-    {
-        static std::mutex m;
-        return m;
-    }
-
-    std::unordered_map<HWND, TrayWindowState>& GetTrayWindowStateMap()
-    {
-        static std::unordered_map<HWND, TrayWindowState> map;
-        return map;
-    }
+    constexpr DWORD kBrowserHintPipeReadTimeoutMs = 3500;
+    constexpr DWORD kBrowserHintPipePollIntervalMs = 20;
 
     struct BrowserHint
     {
@@ -146,11 +126,10 @@ namespace
     struct BrowserHintServerState
     {
         std::mutex mutex;
-        StreamSocketListener listener{ nullptr };
-        winrt::event_token token{};
+        std::thread worker;
+        HANDLE stopEvent{ nullptr };
         bool started{ false };
         bool binding{ false };
-        std::string authToken;
         bool extensionSeen{ false };
         std::chrono::steady_clock::time_point extensionSeenAt{};
         bool hasHint{ false };
@@ -321,6 +300,122 @@ namespace
         return lrp::ParseDelimitedTerms(raw);
     }
 
+    bool TryReadExactPipeBytesWithTimeout(
+        HANDLE pipe,
+        HANDLE stopEvent,
+        void* buffer,
+        size_t bytesToRead,
+        DWORD timeoutMs,
+        std::wstring& errorOut)
+    {
+        auto* destination = static_cast<unsigned char*>(buffer);
+        size_t bytesRemaining = bytesToRead;
+        const auto deadline = GetTickCount64() + timeoutMs;
+
+        while (bytesRemaining > 0)
+        {
+            if (WaitForSingleObject(stopEvent, 0) == WAIT_OBJECT_0)
+            {
+                errorOut = L"server-stopping";
+                return false;
+            }
+
+            DWORD bytesRead = 0;
+            auto chunkSize = static_cast<DWORD>((std::min)(
+                bytesRemaining,
+                static_cast<size_t>((std::numeric_limits<DWORD>::max)())));
+            if (ReadFile(pipe, destination, chunkSize, &bytesRead, nullptr))
+            {
+                if (bytesRead == 0)
+                {
+                    errorOut = L"pipe-client-disconnected";
+                    return false;
+                }
+
+                destination += bytesRead;
+                bytesRemaining -= bytesRead;
+                continue;
+            }
+
+            auto lastError = GetLastError();
+            if (lastError == ERROR_MORE_DATA && bytesRead > 0)
+            {
+                destination += bytesRead;
+                bytesRemaining -= bytesRead;
+                continue;
+            }
+
+            if (lastError == ERROR_NO_DATA)
+            {
+                if (GetTickCount64() >= deadline)
+                {
+                    errorOut = L"pipe-read-timeout";
+                    return false;
+                }
+
+                auto waitResult = WaitForSingleObject(stopEvent, kBrowserHintPipePollIntervalMs);
+                if (waitResult == WAIT_OBJECT_0)
+                {
+                    errorOut = L"server-stopping";
+                    return false;
+                }
+
+                continue;
+            }
+
+            if (lastError == ERROR_BROKEN_PIPE || lastError == ERROR_PIPE_NOT_CONNECTED)
+            {
+                errorOut = L"pipe-client-disconnected";
+                return false;
+            }
+
+            errorOut = L"pipe-read-failed";
+            return false;
+        }
+
+        errorOut.clear();
+        return true;
+    }
+
+    bool TryReadPipePayloadWithTimeout(
+        HANDLE pipe,
+        HANDLE stopEvent,
+        size_t maxBytes,
+        std::string& payloadOut,
+        std::wstring& errorOut)
+    {
+        uint32_t payloadLength = 0;
+        if (!TryReadExactPipeBytesWithTimeout(pipe, stopEvent, &payloadLength, sizeof(payloadLength), kBrowserHintPipeReadTimeoutMs, errorOut))
+            return false;
+
+        if (payloadLength > maxBytes)
+        {
+            errorOut = L"payload-too-large";
+            return false;
+        }
+
+        payloadOut.assign(payloadLength, '\0');
+        if (payloadLength == 0)
+        {
+            errorOut.clear();
+            return true;
+        }
+
+        return TryReadExactPipeBytesWithTimeout(pipe, stopEvent, payloadOut.data(), payloadLength, kBrowserHintPipeReadTimeoutMs, errorOut);
+    }
+
+    bool IsTrustedBrowserHintPipeClient(HANDLE pipe, std::wstring& errorOut)
+    {
+        DWORD clientProcessId = 0;
+        if (!GetNamedPipeClientProcessId(pipe, &clientProcessId) || clientProcessId == 0)
+        {
+            errorOut = L"pipe-client-unidentified";
+            return false;
+        }
+
+        return lrp::browser::TryValidateBrowserNativeHostClientProcess(clientProcessId, &errorOut);
+    }
+
     struct BoolValueGuard
     {
         BoolValueGuard(bool& target, bool replacement)
@@ -339,6 +434,135 @@ namespace
         bool& m_target;
         bool m_original;
     };
+
+    using MainWindowImpl = winrt::Last_Rich_Presence::implementation::MainWindow;
+
+    struct AppPageRoute
+    {
+        FrameworkElement (*pageHost)(MainWindowImpl&);
+        NavigationViewItem (*navItem)(MainWindowImpl&);
+        void (*resetScroll)(MainWindowImpl&);
+    };
+
+    FrameworkElement ResolveHomePageHost(MainWindowImpl& window)
+    {
+        return window.HomePage();
+    }
+
+    FrameworkElement ResolveMusicPageHost(MainWindowImpl& window)
+    {
+        return window.MusicPage();
+    }
+
+    FrameworkElement ResolveCreativePageHost(MainWindowImpl& window)
+    {
+        return window.CreativePage();
+    }
+
+    FrameworkElement ResolveProductivityPageHost(MainWindowImpl& window)
+    {
+        return window.ProductivityPage();
+    }
+
+    FrameworkElement ResolveSettingsPageHost(MainWindowImpl& window)
+    {
+        return window.SettingsPage();
+    }
+
+    NavigationViewItem ResolveHomeNavItem(MainWindowImpl& window)
+    {
+        return window.HomeNavItem();
+    }
+
+    NavigationViewItem ResolveMusicNavItem(MainWindowImpl& window)
+    {
+        return window.MusicNavItem();
+    }
+
+    NavigationViewItem ResolveCreativeNavItem(MainWindowImpl& window)
+    {
+        return window.CreativeNavItem();
+    }
+
+    NavigationViewItem ResolveProductivityNavItem(MainWindowImpl& window)
+    {
+        return window.ProductivityNavItem();
+    }
+
+    NavigationViewItem ResolveSettingsNavItem(MainWindowImpl& window)
+    {
+        return window.SettingsNavItem();
+    }
+
+    void ResetHomePageScroll(MainWindowImpl& window)
+    {
+        winrt::get_self<winrt::Last_Rich_Presence::implementation::HomePageControl>(
+            window.HomePage())->ResetScrollPosition();
+    }
+
+    void ResetMusicPageScroll(MainWindowImpl& window)
+    {
+        winrt::get_self<winrt::Last_Rich_Presence::implementation::MusicPageControl>(
+            window.MusicPage())->ResetScrollPosition();
+    }
+
+    void ResetCreativePageScroll(MainWindowImpl& window)
+    {
+        winrt::get_self<winrt::Last_Rich_Presence::implementation::CreativePageControl>(
+            window.CreativePage())->ResetScrollPosition();
+    }
+
+    void ResetProductivityPageScroll(MainWindowImpl& window)
+    {
+        winrt::get_self<winrt::Last_Rich_Presence::implementation::ProductivityPageControl>(
+            window.ProductivityPage())->ResetScrollPosition();
+    }
+
+    void ResetSettingsPageScroll(MainWindowImpl& window)
+    {
+        winrt::get_self<winrt::Last_Rich_Presence::implementation::SettingsPageControl>(
+            window.SettingsPage())->ResetScrollPosition();
+    }
+
+    auto const& AppPageRoutes()
+    {
+        static const std::array<AppPageRoute, lrp::ui::kAppPageOrder.size()> routes{ {
+            { ResolveHomePageHost, ResolveHomeNavItem, ResetHomePageScroll },
+            { ResolveMusicPageHost, ResolveMusicNavItem, ResetMusicPageScroll },
+            { ResolveCreativePageHost, ResolveCreativeNavItem, ResetCreativePageScroll },
+            { ResolveProductivityPageHost, ResolveProductivityNavItem, ResetProductivityPageScroll },
+            { ResolveSettingsPageHost, ResolveSettingsNavItem, ResetSettingsPageScroll }
+        } };
+        return routes;
+    }
+
+    AppPageRoute const* TryFindAppPageRoute(lrp::ui::AppPage page) noexcept
+    {
+        auto index = lrp::ui::TryAppPageIndex(page);
+        WINRT_ASSERT(index.has_value());
+        if (!index)
+            return nullptr;
+
+        auto const& routes = AppPageRoutes();
+        return &routes[static_cast<size_t>(*index)];
+    }
+
+    void InitializePageRouting(MainWindowImpl& window)
+    {
+        auto const& routes = AppPageRoutes();
+        for (size_t index = 0; index < routes.size(); ++index)
+        {
+            auto const page = lrp::ui::kAppPageOrder[index];
+            auto const& route = routes[index];
+
+            auto navItem = route.navItem(window);
+            WINRT_ASSERT(static_cast<bool>(navItem));
+            if (!navItem)
+                continue;
+
+            navItem.Tag(box_value(lrp::ui::AppPageTagHString(page)));
+        }
+    }
 
     std::wstring NarrowToWide(const std::string& value)
     {
@@ -867,96 +1091,6 @@ namespace
         return true;
     }
 
-    std::string ToLowerAscii(std::string value)
-    {
-        for (auto& ch : value)
-            ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-        return value;
-    }
-
-    std::string TrimAscii(std::string value)
-    {
-        auto isWs = [](char ch)
-        {
-            return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n';
-        };
-
-        while (!value.empty() && isWs(value.front()))
-            value.erase(value.begin());
-        while (!value.empty() && isWs(value.back()))
-            value.pop_back();
-        return value;
-    }
-
-    int ParseContentLength(const std::string& headers)
-    {
-        auto lower = ToLowerAscii(headers);
-        const std::string key = "content-length:";
-        auto pos = lower.find(key);
-        if (pos == std::string::npos) return 0;
-
-        pos += key.size();
-        while (pos < lower.size() && (lower[pos] == ' ' || lower[pos] == '\t')) ++pos;
-
-        int value = 0;
-        while (pos < lower.size() && lower[pos] >= '0' && lower[pos] <= '9')
-        {
-            value = value * 10 + (lower[pos] - '0');
-            ++pos;
-        }
-
-        return value;
-    }
-
-    std::string GetHeaderValue(const std::string& headers, const std::string& headerName)
-    {
-        std::istringstream stream(headers);
-        std::string line;
-        const std::string target = ToLowerAscii(headerName);
-
-        bool first = true;
-        while (std::getline(stream, line))
-        {
-            if (!line.empty() && line.back() == '\r')
-                line.pop_back();
-
-            if (first)
-            {
-                first = false;
-                continue;
-            }
-
-            if (line.empty())
-                break;
-
-            auto colon = line.find(':');
-            if (colon == std::string::npos)
-                continue;
-
-            auto key = ToLowerAscii(TrimAscii(line.substr(0, colon)));
-            if (key != target)
-                continue;
-
-            return TrimAscii(line.substr(colon + 1));
-        }
-
-        return {};
-    }
-
-    std::string GenerateAuthToken()
-    {
-        std::random_device rd;
-        std::mt19937_64 rng(rd());
-
-        std::ostringstream oss;
-        for (int i = 0; i < 4; ++i)
-        {
-            auto chunk = rng();
-            oss << std::hex << std::setw(16) << std::setfill('0') << chunk;
-        }
-        return oss.str();
-    }
-
     bool IsSameHintSnapshot(const BrowserHint& left, const BrowserHint& right)
     {
         return
@@ -1389,268 +1523,202 @@ namespace
         return result;
     }
 
-    winrt::fire_and_forget ProcessBrowserHintSocket(StreamSocket socket)
+    std::string BuildBrowserHintBridgeResponse(bool ok, std::wstring_view error = {})
     {
-        auto lifetime = socket;
-        constexpr int kMaxBodyBytes = 64 * 1024;
+        if (ok)
+            return "{\"ok\":true}";
 
-        try
+        auto errorUtf8 = winrt::to_string(std::wstring(error.empty() ? L"bridge-failed" : error));
+        return std::string("{\"ok\":false,\"error\":\"") + errorUtf8 + "\"}";
+    }
+
+    void ProcessBrowserHintPipeClient(HANDLE pipe, HANDLE stopEvent)
+    {
+        std::wstring trustError;
+        if (!IsTrustedBrowserHintPipeClient(pipe, trustError))
         {
-            DataReader reader(socket.InputStream());
-            reader.InputStreamOptions(InputStreamOptions::Partial);
-
-            std::string request;
-            request.reserve(8192);
-
-            size_t headerEnd = std::string::npos;
-            int contentLength = 0;
-            bool requestTooLarge = false;
-
-            for (int i = 0; i < 64; ++i)
-            {
-                uint32_t loaded = co_await reader.LoadAsync(1024);
-                if (!loaded) break;
-
-                std::vector<uint8_t> chunk(loaded);
-                reader.ReadBytes(chunk);
-                request.append(reinterpret_cast<const char*>(chunk.data()), chunk.size());
-
-                if (request.size() > static_cast<size_t>(kMaxBodyBytes + 8192))
-                {
-                    requestTooLarge = true;
-                    break;
-                }
-
-                if (headerEnd == std::string::npos)
-                {
-                    headerEnd = request.find("\r\n\r\n");
-                    if (headerEnd != std::string::npos)
-                    {
-                        auto headers = request.substr(0, headerEnd + 4);
-                        contentLength = ParseContentLength(headers);
-                        if (contentLength > kMaxBodyBytes)
-                        {
-                            requestTooLarge = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (headerEnd != std::string::npos)
-                {
-                    size_t expectedSize = headerEnd + 4 + static_cast<size_t>(contentLength);
-                    if (request.size() >= expectedSize)
-                        break;
-                }
-            }
-
-            std::string method;
-            std::string path;
-            std::string body;
-            std::string headers;
-
-            auto firstLineEnd = request.find("\r\n");
-            if (firstLineEnd != std::string::npos)
-            {
-                auto firstLine = request.substr(0, firstLineEnd);
-                auto sp1 = firstLine.find(' ');
-                auto sp2 = (sp1 == std::string::npos) ? std::string::npos : firstLine.find(' ', sp1 + 1);
-
-                if (sp1 != std::string::npos && sp2 != std::string::npos)
-                {
-                    method = firstLine.substr(0, sp1);
-                    path = firstLine.substr(sp1 + 1, sp2 - sp1 - 1);
-                }
-            }
-
-            auto bodyPos = request.find("\r\n\r\n");
-            if (bodyPos != std::string::npos)
-            {
-                headers = request.substr(0, bodyPos + 2);
-                bodyPos += 4;
-                if (bodyPos <= request.size())
-                    body = request.substr(bodyPos);
-            }
-
-            int statusCode = 200;
-            std::string statusText = "OK";
-            std::string responseBody = "{\"ok\":true}";
-
-            if (requestTooLarge)
-            {
-                statusCode = 413;
-                statusText = "Payload Too Large";
-                responseBody = "{\"ok\":false,\"error\":\"payload-too-large\"}";
-            }
-            else if (method == "GET" && path == "/v1/browser-hint/token")
-            {
-                std::string token;
-                {
-                    auto& state = GetHintServerState();
-                    std::lock_guard<std::mutex> lock(state.mutex);
-                    token = state.authToken;
-                }
-
-                if (token.empty())
-                {
-                    statusCode = 503;
-                    statusText = "Service Unavailable";
-                    responseBody = "{\"ok\":false,\"error\":\"token-unavailable\"}";
-                }
-                else
-                {
-                    responseBody = "{\"ok\":true,\"token\":\"" + token + "\"}";
-                }
-            }
-            else if (method == "OPTIONS" && path == "/v1/browser-hint")
-            {
-                statusCode = 200;
-                statusText = "OK";
-            }
-            else if (method == "POST" && path == "/v1/browser-hint")
-            {
-                std::string expectedToken;
-                {
-                    auto& state = GetHintServerState();
-                    std::lock_guard<std::mutex> lock(state.mutex);
-                    expectedToken = state.authToken;
-                }
-
-                auto tokenHeader = GetHeaderValue(headers, "x-lrp-token");
-                if (expectedToken.empty() || tokenHeader.empty() || tokenHeader != expectedToken)
-                {
-                    statusCode = 401;
-                    statusText = "Unauthorized";
-                    responseBody = "{\"ok\":false,\"error\":\"invalid-token\"}";
-                }
-                else
-                {
-                    std::wstring parseError;
-                    if (!UpdateStoredBrowserHint(body, &parseError))
-                    {
-                        statusCode = 400;
-                        statusText = "Bad Request";
-                        auto errUtf8 = winrt::to_string(parseError.empty() ? std::wstring(L"invalid-payload") : parseError);
-                        responseBody = "{\"ok\":false,\"error\":\"" + errUtf8 + "\"}";
-                    }
-                    else
-                    {
-                        responseBody = "{\"ok\":true}";
-                    }
-                }
-            }
-            else
-            {
-                statusCode = 404;
-                statusText = "Not Found";
-                responseBody = "{\"ok\":false,\"error\":\"not-found\"}";
-            }
-            std::ostringstream response;
-            response << "HTTP/1.1 " << statusCode << " " << statusText << "\r\n"
-                << "Content-Type: application/json\r\n"
-                << "Access-Control-Allow-Origin: *\r\n"
-                << "Access-Control-Allow-Headers: content-type, x-lrp-extension, x-lrp-token\r\n"
-                << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
-                << "Connection: close\r\n"
-                << "Content-Length: " << responseBody.size() << "\r\n\r\n"
-                << responseBody;
-
-            DataWriter writer(socket.OutputStream());
-            writer.UnicodeEncoding(UnicodeEncoding::Utf8);
-            writer.WriteString(winrt::to_hstring(response.str()));
-            co_await writer.StoreAsync();
-            co_await writer.FlushAsync();
-            writer.DetachStream();
+            std::wstring writeError;
+            lrp::browser::TryWriteLengthPrefixedMessage(
+                pipe,
+                BuildBrowserHintBridgeResponse(false, trustError),
+                writeError);
+            return;
         }
-        catch (...) {}
 
-        try { socket.Close(); } catch (...) {}
+        std::string request;
+        std::wstring readError;
+        if (!TryReadPipePayloadWithTimeout(
+                pipe,
+                stopEvent,
+                lrp::browser::kMaxBrowserNativeMessageBytes,
+                request,
+                readError))
+        {
+            if (readError == L"server-stopping")
+                return;
+
+            std::wstring writeError;
+            lrp::browser::TryWriteLengthPrefixedMessage(
+                pipe,
+                BuildBrowserHintBridgeResponse(false, readError),
+                writeError);
+            return;
+        }
+
+        std::wstring parseError;
+        auto response = UpdateStoredBrowserHint(request, &parseError)
+            ? BuildBrowserHintBridgeResponse(true)
+            : BuildBrowserHintBridgeResponse(false, parseError.empty() ? L"invalid-payload" : parseError);
+
+        std::wstring writeError;
+        lrp::browser::TryWriteLengthPrefixedMessage(pipe, response, writeError);
+    }
+
+    void BrowserHintPipeServerWorker(HANDLE stopEvent)
+    {
+        {
+            auto& state = GetHintServerState();
+            std::lock_guard<std::mutex> lock(state.mutex);
+            state.started = true;
+            state.binding = false;
+        }
+
+        for (;;)
+        {
+            if (WaitForSingleObject(stopEvent, 0) == WAIT_OBJECT_0)
+                break;
+
+            std::wstring pipeError;
+            HANDLE pipe = lrp::browser::CreateBrowserHintPipeServerHandle(
+                PIPE_ACCESS_DUPLEX,
+                PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+                &pipeError);
+            if (pipe == INVALID_HANDLE_VALUE)
+                break;
+
+            BOOL connected = ConnectNamedPipe(pipe, nullptr) ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);
+            if (!connected)
+            {
+                CloseHandle(pipe);
+                if (WaitForSingleObject(stopEvent, 0) == WAIT_OBJECT_0)
+                    break;
+                continue;
+            }
+
+            DWORD pipeMode = PIPE_READMODE_MESSAGE | PIPE_NOWAIT;
+            if (!SetNamedPipeHandleState(pipe, &pipeMode, nullptr, nullptr))
+            {
+                CloseHandle(pipe);
+                if (WaitForSingleObject(stopEvent, 0) == WAIT_OBJECT_0)
+                    break;
+                continue;
+            }
+
+            if (WaitForSingleObject(stopEvent, 0) == WAIT_OBJECT_0)
+            {
+                DisconnectNamedPipe(pipe);
+                CloseHandle(pipe);
+                break;
+            }
+
+            ProcessBrowserHintPipeClient(pipe, stopEvent);
+            // Ensure the native-host client can read the full response before the
+            // server tears down this one-shot pipe instance.
+            FlushFileBuffers(pipe);
+            DisconnectNamedPipe(pipe);
+            CloseHandle(pipe);
+        }
+
+        auto& state = GetHintServerState();
+        std::lock_guard<std::mutex> lock(state.mutex);
+        state.started = false;
+        state.binding = false;
+    }
+
+    void WakeBrowserHintPipeServer()
+    {
+        HANDLE pipe = CreateFileW(
+            lrp::browser::kBrowserHintPipeName,
+            GENERIC_READ | GENERIC_WRITE,
+            0,
+            nullptr,
+            OPEN_EXISTING,
+            0,
+            nullptr);
+        if (pipe != INVALID_HANDLE_VALUE)
+            CloseHandle(pipe);
     }
 
     void StartBrowserHintServer()
     {
         auto& state = GetHintServerState();
-        StreamSocketListener listener{ nullptr };
 
+        std::lock_guard<std::mutex> lock(state.mutex);
+        if (state.started || state.binding)
+            return;
+
+        auto stopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (!stopEvent)
+            return;
+
+        try
         {
-            std::lock_guard<std::mutex> lock(state.mutex);
-            if (state.started || state.binding)
-                return;
-
-            try
+            state.stopEvent = stopEvent;
+            state.binding = true;
+            state.worker = std::thread([stopEvent]()
             {
-                state.listener = StreamSocketListener();
-                state.token = state.listener.ConnectionReceived([](auto const&, StreamSocketListenerConnectionReceivedEventArgs const& args)
-                {
-                    ProcessBrowserHintSocket(args.Socket());
-                });
-
-                state.authToken = GenerateAuthToken();
-
-                state.binding = true;
-                listener = state.listener;
-            }
-            catch (...)
-            {
-                state.listener = nullptr;
-                state.started = false;
-                state.binding = false;
-                state.authToken.clear();
-                return;
-            }
+                BrowserHintPipeServerWorker(stopEvent);
+            });
         }
-
-        auto bindAsync = [](StreamSocketListener listenerRef) -> winrt::fire_and_forget
+        catch (...)
         {
-            try
-            {
-                co_await listenerRef.BindEndpointAsync(HostName(L"127.0.0.1"), L"32145");
-
-                auto& state = GetHintServerState();
-                std::lock_guard<std::mutex> lock(state.mutex);
-                if (state.listener == listenerRef)
-                {
-                    state.started = true;
-                    state.binding = false;
-                }
-            }
-            catch (...)
-            {
-                auto& state = GetHintServerState();
-                std::lock_guard<std::mutex> lock(state.mutex);
-                if (state.listener == listenerRef)
-                {
-                    try { state.listener.ConnectionReceived(state.token); } catch (...) {}
-                    try { state.listener.Close(); } catch (...) {}
-                    state.listener = nullptr;
-                    state.started = false;
-                    state.binding = false;
-                    state.authToken.clear();
-                }
-            }
-        };
-
-        bindAsync(listener);
+            CloseHandle(stopEvent);
+            state.stopEvent = nullptr;
+            state.started = false;
+            state.binding = false;
+        }
     }
 
     void StopBrowserHintServer()
     {
+        std::thread worker;
+        HANDLE stopEvent = nullptr;
+
+        {
+            auto& state = GetHintServerState();
+            std::lock_guard<std::mutex> lock(state.mutex);
+
+            stopEvent = state.stopEvent;
+            if (stopEvent)
+                SetEvent(stopEvent);
+
+            worker = std::move(state.worker);
+            state.stopEvent = nullptr;
+            state.binding = false;
+        }
+
+        if (stopEvent)
+        {
+            WakeBrowserHintPipeServer();
+
+            if (worker.joinable())
+                worker.join();
+
+            CloseHandle(stopEvent);
+        }
+        else if (worker.joinable())
+        {
+            worker.join();
+        }
+
         auto& state = GetHintServerState();
         std::lock_guard<std::mutex> lock(state.mutex);
-
-        if (!state.started && !state.binding)
-            return;
-
-        try { state.listener.ConnectionReceived(state.token); } catch (...) {}
-        try { state.listener.Close(); } catch (...) {}
-
-        state.listener = nullptr;
         state.started = false;
         state.binding = false;
-        state.authToken.clear();
         state.extensionSeen = false;
         state.extensionSeenAt = {};
         state.hasHint = false;
+        state.lastAcceptedSequence = -1;
         state.hint = {};
     }
 
@@ -1867,52 +1935,912 @@ namespace winrt::Last_Rich_Presence::implementation
         ShutdownWindow();
     }
 
-    // =====================================================================
-    // Initialization
-    // =====================================================================
-
-    void MainWindow::InitWindow()
+    HomePageControl* MainWindow::HomePageControlImpl()
     {
-        m_isInitializing = true;
-        InitializeComponent();
-        m_dispatcherQueue = Microsoft::UI::Dispatching::DispatcherQueue::GetForCurrentThread();
-        SettingsDiagnosticsPanelHost().ClearRequested({ this, &MainWindow::OnClearDiagnosticsClicked });
-        SettingsDiagnosticsPanelHost().ExportJsonRequested({ this, &MainWindow::OnExportDiagnosticsJsonClicked });
-        RefreshDiagnosticsPanel();
+        return winrt::get_self<implementation::HomePageControl>(HomePage());
+    }
 
-        try
+    MusicPageControl* MainWindow::MusicPageControlImpl()
+    {
+        return winrt::get_self<implementation::MusicPageControl>(MusicPage());
+    }
+
+    ProductivityPageControl* MainWindow::ProductivityPageControlImpl()
+    {
+        return winrt::get_self<implementation::ProductivityPageControl>(ProductivityPage());
+    }
+
+    CreativePageControl* MainWindow::CreativePageControlImpl()
+    {
+        return winrt::get_self<implementation::CreativePageControl>(CreativePage());
+    }
+
+    SettingsPageControl* MainWindow::SettingsPageControlImpl()
+    {
+        return winrt::get_self<implementation::SettingsPageControl>(SettingsPage());
+    }
+
+    FrameworkElement MainWindow::PageHost(lrp::ui::AppPage page)
+    {
+        auto route = TryFindAppPageRoute(page);
+        WINRT_ASSERT(route != nullptr);
+        if (!route)
+            return FrameworkElement{ nullptr };
+
+        return route->pageHost(*this);
+    }
+
+    NavigationViewItem MainWindow::NavItemForPage(lrp::ui::AppPage page)
+    {
+        auto route = TryFindAppPageRoute(page);
+        WINRT_ASSERT(route != nullptr);
+        if (!route)
+            return NavigationViewItem{ nullptr };
+
+        return route->navItem(*this);
+    }
+
+    void MainWindow::ShowOnlyPage(lrp::ui::AppPage page)
+    {
+        auto const& routes = AppPageRoutes();
+        for (size_t index = 0; index < routes.size(); ++index)
         {
-            auto uiSettings = Windows::UI::ViewManagement::UISettings();
-            m_reduceMotionRequested = !uiSettings.AnimationsEnabled();
+            auto const pageForRoute = lrp::ui::kAppPageOrder[index];
+            auto const& route = routes[index];
+            auto host = route.pageHost(*this);
+            WINRT_ASSERT(static_cast<bool>(host));
+            if (!host)
+                continue;
+
+            host.Visibility(pageForRoute == page ? Visibility::Visible : Visibility::Collapsed);
         }
-        catch (...)
+    }
+
+    void MainWindow::ResetPageScrollPosition(lrp::ui::AppPage page)
+    {
+        auto route = TryFindAppPageRoute(page);
+        WINRT_ASSERT(route != nullptr);
+        if (!route)
+            return;
+
+        route->resetScroll(*this);
+    }
+
+    void MainWindow::SyncMusicSettingsFromControls()
+    {
+        m_sourceDebugMode = m_settings.media.sourceDebugMode;
+
+        if (!m_presence)
+            return;
+
+        m_presence->SetShowTimestamps(m_settings.media.showTimestamps);
+        m_presence->SetShowSource(m_settings.media.showSource);
+        m_presence->SetShowPaused(m_settings.media.showPaused);
+        m_presence->SetShowAlbumArt(m_settings.media.showAlbumArt);
+    }
+
+    void MainWindow::SyncShellSettingsFromControls()
+    {
+        m_closeToTrayOnClose = m_settings.behavior.closeToTrayOnClose;
+        m_launchOnStartup = m_settings.behavior.launchOnStartup;
+        m_startMinimizedToTray = m_settings.behavior.startMinimizedToTray;
+        m_trayLeftClickToggles = m_settings.behavior.trayLeftClickToggles;
+        m_showDefaultIdleStatus = m_settings.media.showDefaultIdleStatus;
+        m_sensitiveKeywordFilter = m_settings.media.sensitiveKeywordFilter;
+        m_strictBrowserPrivacy = m_settings.media.strictBrowserPrivacy;
+        m_suppressBrowserAlbumArt = m_settings.media.suppressBrowserAlbumArt;
+        m_blockedAppSiteTermsRaw = m_settings.media.blockedAppSiteTermsRaw;
+        m_themeMode = m_settings.behavior.themeMode;
+        m_mediaActivityTypeOverride = m_settings.media.activityTypeOverride;
+        m_creativeActivityTypeOverride = m_settings.creative.activityTypeOverride;
+        m_productiveActivityTypeOverride = m_settings.productive.activityTypeOverride;
+
+        m_trayController.SetCloseToTrayOnClose(m_closeToTrayOnClose);
+        m_trayController.SetTrayLeftClickToggles(m_trayLeftClickToggles);
+        m_trayController.SetPresenceEnabled(m_enabled);
+    }
+
+    lrp::ui::MusicPageState MainWindow::BuildMusicPageState(const MediaInfo& info, int positionSeconds, int durationSeconds)
+    {
+        lrp::ui::MusicPageState state{};
+        state.hasMedia = !info.title.empty();
+        state.isPlaying = info.isPlaying;
+        state.motionEnabled = IsMotionEnabled();
+
+        if (positionSeconds < 0)
+            positionSeconds = static_cast<int>(info.position.count());
+        if (durationSeconds < 0)
+            durationSeconds = static_cast<int>(info.duration.count());
+
+        if (positionSeconds < 0)
+            positionSeconds = 0;
+        if (durationSeconds < 0)
+            durationSeconds = 0;
+        if (durationSeconds > 0 && positionSeconds > durationSeconds)
+            positionSeconds = durationSeconds;
+
+        state.title = state.hasMedia ? hstring(info.title) : hstring(L"Nothing playing");
+        state.artist = state.hasMedia
+            ? hstring(info.artist.empty() ? std::wstring(L"\x2014") : info.artist)
+            : hstring(L"\x2014");
+        state.albumTitle = hstring(info.albumTitle);
+        state.positionText = hstring(FormatTime(positionSeconds));
+        state.durationText = hstring(FormatTime(durationSeconds));
+        state.playbackStateText = !state.hasMedia ? hstring(L"Idle") : hstring(info.isPlaying ? L"Playing" : L"Paused");
+        state.showSourceBadge = m_settings.media.showSource && !info.sourceDisplayName.empty();
+        state.sourceText = info.sourceDisplayName.empty() ? hstring(L"No source") : hstring(info.sourceDisplayName);
+        state.showSourceDebug = state.showSourceBadge && m_settings.media.sourceDebugMode;
+        state.sourceDebugText = state.showSourceDebug ? hstring(FormatSourceDebugText(info)) : hstring();
+
+        if (durationSeconds > 0)
         {
-            m_reduceMotionRequested = false;
+            auto progress = (static_cast<double>(positionSeconds) / static_cast<double>(durationSeconds)) * 100.0;
+            if (progress < 0.0)
+                progress = 0.0;
+            if (progress > 100.0)
+                progress = 100.0;
+            state.progressPercent = progress;
         }
 
-        SongWaveViewport().SizeChanged([this](IInspectable const&, SizeChangedEventArgs const&)
-        {
-            UpdateSongWaveClip(SongProgressBar().Value());
-        });
-        SongProgressBar().ValueChanged([this](IInspectable const&, auto const& args)
-        {
-            UpdateSongWaveClip(args.NewValue());
-        });
-        UpdateSongWaveClip(0.0);
-        SetSongWaveActive(false);
+        return state;
+    }
 
-        HomeMiniWaveViewport().SizeChanged([this](IInspectable const&, SizeChangedEventArgs const&)
+    lrp::ui::ProductivityPageState MainWindow::BuildProductivityPageState(const ProductiveActivityInfo& info)
+    {
+        auto buildAppLabel = [](const ProductiveActivityInfo& activity)
         {
-            UpdateHomeMiniWaveClip(HomeMiniProgressBar().Value());
-        });
-        HomeMiniProgressBar().ValueChanged([this](IInspectable const&, auto const& args)
-        {
-            UpdateHomeMiniWaveClip(args.NewValue());
-        });
-        UpdateHomeMiniWaveClip(0.0);
-        SetHomeMiniWaveActive(false);
-        m_activePageTag = L"Home";
+            std::wstring label = activity.appName.empty() ? std::wstring(L"Microsoft Office") : activity.appName;
+            if (!activity.appKey.empty())
+                label += L" (" + activity.appKey + L")";
+            return label;
+        };
 
+        auto buildProcessLabel = [](const ProductiveActivityInfo& activity)
+        {
+            std::wstring label = activity.processName.empty() ? std::wstring(L"None") : activity.processName;
+            if (activity.processId != 0)
+                label += L" (PID " + std::to_wstring(activity.processId) + L")";
+            return label;
+        };
+
+        lrp::ui::ProductivityPageState state{};
+        state.settingsControlsEnabled = m_productiveEnabled;
+
+        bool rawActive = info.active;
+        bool rawAllowed = !rawActive || IsProductiveAppEnabled(info);
+        bool rawFiltered = rawActive && !rawAllowed;
+
+        if (!m_productiveEnabled)
+        {
+            state.detectedAppText = L"Productive RPC disabled";
+            state.detectedProjectText = L"Enable Productive RPC to publish Office activity.";
+            state.detectedWindowText = L"None";
+            state.detectedProcessText = L"None";
+            state.runtimeSummaryText = L"Productive pipeline is disabled.";
+            return state;
+        }
+
+        if (rawFiltered)
+        {
+            state.detectedAppText = hstring(buildAppLabel(info) + L" (filtered)");
+            state.detectedProjectText = L"Enable this app in the per-app list to allow Productivity RPC.";
+            state.detectedWindowText = hstring(info.windowTitle.empty() ? std::wstring(L"None") : info.windowTitle);
+            state.detectedProcessText = hstring(buildProcessLabel(info));
+            state.runtimeSummaryText = hstring(
+                L"Detected app is blocked by Productivity per-app filters. Detection mode: " +
+                ProductiveDetectionModeLabel(m_productiveDetectionMode) + L".");
+            return state;
+        }
+
+        if (!info.active)
+        {
+            state.detectedAppText = L"Awaiting Productive Activity";
+            state.detectedProjectText = L"Launch a supported Office app to update your status.";
+            state.detectedWindowText = L"None";
+            state.detectedProcessText = L"None";
+            state.runtimeSummaryText = hstring(
+                L"Waiting for supported apps (Word, Excel, PowerPoint, OneNote, Access, Publisher, Visio, Project). "
+                L"Detection mode: " + ProductiveDetectionModeLabel(m_productiveDetectionMode) + L".");
+            return state;
+        }
+
+        std::wstring subtitle;
+        if (m_productiveShowProjectName && !info.projectHint.empty())
+            subtitle = L"Working on " + info.projectHint;
+        else
+            subtitle = L"Working in " + (info.appName.empty() ? std::wstring(L"Microsoft Office") : info.appName);
+
+        state.detectedAppText = hstring(buildAppLabel(info));
+        state.detectedProjectText = hstring(subtitle);
+        state.detectedWindowText = hstring(info.windowTitle.empty() ? std::wstring(L"None") : info.windowTitle);
+        state.detectedProcessText = hstring(buildProcessLabel(info));
+        state.runtimeSummaryText = hstring(
+            L"Productive detector active. Detection mode: " + ProductiveDetectionModeLabel(m_productiveDetectionMode) +
+            L". Outlook, Teams, and background Office helpers are excluded.");
+        return state;
+    }
+
+    lrp::ui::CreativePageState MainWindow::BuildCreativePageState(const CreativeActivityInfo& info)
+    {
+        auto buildAppLabel = [](const CreativeActivityInfo& activity)
+        {
+            std::wstring label = activity.appName.empty() ? std::wstring(L"Adobe creativity app") : activity.appName;
+            if (!activity.appKey.empty())
+                label += L" (" + activity.appKey + L")";
+            return label;
+        };
+
+        auto buildProcessLabel = [](const CreativeActivityInfo& activity)
+        {
+            std::wstring label = activity.processName.empty() ? std::wstring(L"--") : activity.processName;
+            if (activity.processId != 0)
+                label += L" (PID " + std::to_wstring(activity.processId) + L")";
+            return label;
+        };
+
+        lrp::ui::CreativePageState state{};
+        state.settingsControlsEnabled = m_creativeEnabled;
+
+        std::wstring policySummary =
+            L"Priority: " + CreativePriorityModeLabel(m_creativePriority) +
+            L" | Detection: " + CreativeDetectionModeLabel(m_creativeDetectionMode) +
+            L" | Privacy: " + CreativePrivacyModeLabel(m_creativePrivacyMode) +
+            L" | Idle: " + CreativeIdleBehaviorLabel(m_creativeIdleBehavior) + L". ";
+
+        if (!m_creativeEnabled)
+        {
+            state.mvpHeadlineText = L"Creativity RPC (disabled)";
+            state.mvpSummaryText = hstring(
+                policySummary +
+                L"Creativity detector/pipeline is disabled. Settings are preserved and can be re-enabled later.");
+            state.detectedAppText = L"Disabled";
+            state.detectedProjectText = L"Creativity detection is turned off.";
+            state.detectedWindowText = L"--";
+            state.detectedProcessText = L"--";
+            return state;
+        }
+
+        auto now = std::chrono::steady_clock::now();
+        bool rawActive = info.active;
+        bool rawAllowed = !rawActive || IsCreativeAppEnabled(info);
+        bool rawFiltered = rawActive && !rawAllowed;
+
+        CreativeActivityInfo displayInfo{};
+        bool showDisplay = false;
+        bool showingHeld = false;
+        bool clearImmediatelyMode = false;
+
+        if (rawActive && rawAllowed)
+        {
+            displayInfo = info;
+            showDisplay = true;
+        }
+        else
+        {
+            clearImmediatelyMode = (m_creativeIdleBehavior == CreativeIdleBehavior::ClearImmediately);
+            if (m_creativeIdleBehavior == CreativeIdleBehavior::HoldLast5Seconds &&
+                m_lastCreativeAcceptedActivity.active &&
+                IsCreativeAppEnabled(m_lastCreativeAcceptedActivity) &&
+                m_lastCreativeActiveSeenAt.time_since_epoch().count() > 0)
+            {
+                auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - m_lastCreativeActiveSeenAt);
+                if (elapsed <= std::chrono::seconds(kCreativeIdleHoldSeconds))
+                {
+                    displayInfo = m_lastCreativeAcceptedActivity;
+                    showDisplay = true;
+                    showingHeld = true;
+                }
+            }
+        }
+
+        if (!showDisplay)
+        {
+            std::wstring headline = L"Creativity RPC (MVP detector idle)";
+            std::wstring summary = policySummary;
+
+            if (rawFiltered)
+            {
+                headline = L"Creativity RPC (filtered by app settings)";
+                summary += L"An Adobe app is detected but blocked by your per-app Creativity filter list.";
+
+                if (m_creativePrivacyMode == CreativePrivacyMode::Private)
+                {
+                    state.detectedAppText = L"Creativity activity hidden";
+                    state.detectedProjectText = L"(Filtered and hidden by privacy mode)";
+                    state.detectedWindowText = L"--";
+                    state.detectedProcessText = L"--";
+                }
+                else if (m_creativePrivacyMode == CreativePrivacyMode::AppOnly)
+                {
+                    state.detectedAppText = hstring(buildAppLabel(info) + L" (filtered)");
+                    state.detectedProjectText = L"(Hidden by privacy mode)";
+                    state.detectedWindowText = L"(Hidden by privacy mode)";
+                    state.detectedProcessText = L"(Hidden by privacy mode)";
+                }
+                else
+                {
+                    state.detectedAppText = hstring(buildAppLabel(info) + L" (filtered)");
+                    state.detectedProjectText = L"Enable this app in the per-app list to allow Creativity RPC.";
+                    state.detectedWindowText = hstring(
+                        m_creativeShowWindowTitle && !info.windowTitle.empty()
+                            ? info.windowTitle
+                            : std::wstring(L"(Hidden by setting)"));
+                    state.detectedProcessText = hstring(buildProcessLabel(info));
+                }
+            }
+            else if (clearImmediatelyMode)
+            {
+                headline = L"Creativity RPC (idle - clear mode)";
+                summary += L"No supported app detected. Creativity activity clears immediately.";
+                state.detectedAppText = L"Awaiting Creative Activity";
+                state.detectedProjectText = L"Creativity preview is idle.";
+                state.detectedWindowText = L"None";
+                state.detectedProcessText = L"None";
+            }
+            else
+            {
+                summary += L"Listening for supported apps. Detector remains isolated from the current media pipeline.";
+                state.detectedAppText = L"Awaiting Creative Activity";
+                state.detectedProjectText = L"Launch a supported app to update your status.";
+                state.detectedWindowText = L"None";
+                state.detectedProcessText = L"None";
+            }
+
+            state.mvpHeadlineText = hstring(headline);
+            state.mvpSummaryText = hstring(summary);
+            return state;
+        }
+
+        std::wstring headline = showingHeld
+            ? std::wstring(L"Creativity RPC (holding last activity)")
+            : std::wstring(L"Creativity RPC (MVP detector active)");
+        std::wstring summary = policySummary;
+        if (showingHeld)
+        {
+            int secondsLeft = kCreativeIdleHoldSeconds;
+            if (m_lastCreativeActiveSeenAt.time_since_epoch().count() > 0)
+            {
+                auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - m_lastCreativeActiveSeenAt).count();
+                if (elapsed < 0)
+                    elapsed = 0;
+                secondsLeft = static_cast<int>(kCreativeIdleHoldSeconds - elapsed);
+                if (secondsLeft < 0)
+                    secondsLeft = 0;
+            }
+
+            summary += L"Holding the last allowed Creativity activity for " + std::to_wstring(secondsLeft) + L"s.";
+            if (rawFiltered)
+                summary += L" Current detected Adobe app is filtered.";
+            else if (!rawActive)
+                summary += L" No Adobe app is currently detected.";
+        }
+        else
+        {
+            summary += L"Adobe app detected natively. Creativity settings are active, but Discord publishing remains separate from the media pipeline for now.";
+        }
+
+        state.mvpHeadlineText = hstring(headline);
+        state.mvpSummaryText = hstring(summary);
+
+        if (m_creativePrivacyMode == CreativePrivacyMode::Private)
+        {
+            state.detectedAppText = L"Creativity activity hidden";
+            state.detectedProjectText = L"(Private mode)";
+            state.detectedWindowText = L"(Private mode)";
+            state.detectedProcessText = L"(Private mode)";
+            return state;
+        }
+
+        std::wstring appLabel = buildAppLabel(displayInfo);
+        if (showingHeld)
+            appLabel += L" (held)";
+
+        if (m_creativePrivacyMode == CreativePrivacyMode::AppOnly)
+        {
+            state.detectedAppText = hstring(appLabel);
+            state.detectedProjectText = L"(Hidden by privacy mode)";
+            state.detectedWindowText = L"(Hidden by privacy mode)";
+            state.detectedProcessText = L"(Hidden by privacy mode)";
+            return state;
+        }
+
+        std::wstring projectText;
+        if (!m_creativeShowProjectName)
+            projectText = L"(Hidden by setting)";
+        else if (displayInfo.projectHint.empty())
+            projectText = L"(No project title heuristic)";
+        else
+            projectText = displayInfo.projectHint;
+
+        std::wstring windowText;
+        if (!m_creativeShowWindowTitle)
+            windowText = L"(Hidden by debug setting)";
+        else if (displayInfo.windowTitle.empty())
+            windowText = L"--";
+        else
+            windowText = displayInfo.windowTitle;
+
+        state.detectedAppText = hstring(appLabel);
+        state.detectedProjectText = hstring(projectText);
+        state.detectedWindowText = hstring(windowText);
+        state.detectedProcessText = hstring(buildProcessLabel(displayInfo));
+        return state;
+    }
+
+    lrp::ui::HomePageState MainWindow::BuildHomePageState(int positionSeconds, int durationSeconds)
+    {
+        auto buildProductiveAppLabel = [](const ProductiveActivityInfo& activity)
+        {
+            std::wstring label = activity.appName.empty() ? std::wstring(L"Microsoft Office") : activity.appName;
+            if (!activity.appKey.empty())
+                label += L" (" + activity.appKey + L")";
+            return label;
+        };
+
+        auto buildProductiveProcessLabel = [](const ProductiveActivityInfo& activity)
+        {
+            std::wstring label = activity.processName.empty() ? std::wstring(L"None") : activity.processName;
+            if (activity.processId != 0)
+                label += L" (PID " + std::to_wstring(activity.processId) + L")";
+            return label;
+        };
+
+        auto buildCreativeAppLabel = [](const CreativeActivityInfo& activity)
+        {
+            std::wstring label = activity.appName.empty() ? std::wstring(L"Adobe creativity app") : activity.appName;
+            if (!activity.appKey.empty())
+                label += L" (" + activity.appKey + L")";
+            return label;
+        };
+
+        auto buildCreativeProcessLabel = [](const CreativeActivityInfo& activity)
+        {
+            std::wstring label = activity.processName.empty() ? std::wstring(L"--") : activity.processName;
+            if (activity.processId != 0)
+                label += L" (PID " + std::to_wstring(activity.processId) + L")";
+            return label;
+        };
+
+        auto productiveDetectedViaLabel = [this]() -> std::wstring
+        {
+            switch (m_productiveDetectionMode)
+            {
+            case ProductiveDetectionMode::ForegroundOnly:
+                return L"Detected via foreground window";
+            case ProductiveDetectionMode::VisibleWindowOnly:
+                return L"Detected via visible Office window";
+            default:
+                return L"Detected via foreground + fallback";
+            }
+        };
+
+        auto creativeDetectedViaLabel = [this]() -> std::wstring
+        {
+            switch (m_creativeDetectionMode)
+            {
+            case CreativeDetectionMode::ForegroundOnly:
+                return L"Detected via foreground window";
+            case CreativeDetectionMode::VisibleWindowOnly:
+                return L"Detected via visible Adobe window";
+            default:
+                return L"Detected via foreground + fallback";
+            }
+        };
+
+        lrp::ui::HomePageState state{};
+        state.richPresenceEnabled = m_enabled;
+        state.motionEnabled = IsMotionEnabled();
+
+        bool connected = m_presence && m_presence->IsConnected();
+        bool bridgeStarted = false;
+        bool bridgeBinding = false;
+        bool extensionConnected = false;
+        bool hasHint = false;
+        int64_t hintAgeSeconds = -1;
+        {
+            auto& hintState = GetHintServerState();
+            std::lock_guard<std::mutex> lock(hintState.mutex);
+            bridgeStarted = hintState.started;
+            bridgeBinding = hintState.binding;
+            extensionConnected = IsExtensionConnected(hintState);
+            hasHint = hintState.hasHint;
+
+            if (hasHint)
+            {
+                hintAgeSeconds = std::chrono::duration_cast<std::chrono::seconds>(
+                    std::chrono::steady_clock::now() - hintState.hint.updatedAt).count();
+                if (hintAgeSeconds < 0)
+                    hintAgeSeconds = 0;
+            }
+        }
+
+        if (!m_enabled)
+        {
+            state.statusText = L"Disabled";
+            state.statusSubtext = L"Rich Presence is off";
+            state.healthText = L"Discord: OFF | Extension: OFF | Hint age: --";
+            state.statusIndicatorBrushKey = L"StatusDisconnectedBrush";
+            state.showLiveBadge = false;
+            state.extensionText = L"Browser hints paused";
+            state.extensionSubtext = L"Rich Presence is disabled.";
+            state.extensionIndicatorBrushKey = L"StatusDisconnectedBrush";
+        }
+        else
+        {
+            state.statusIndicatorBrushKey = connected ? L"StatusConnectedBrush" : L"StatusConnectingBrush";
+            state.statusText = connected ? L"Connected to Discord" : L"Connecting to Discord...";
+            state.statusSubtext = connected ? L"Rich Presence is active" : L"Waiting for Discord client";
+            auto nativeHostRegistrationError = lrp::browser::GetLastNativeHostRegistrationError();
+
+            if (extensionConnected)
+            {
+                state.extensionIndicatorBrushKey = L"StatusConnectedBrush";
+                state.extensionText = L"Browser extension";
+                state.extensionSubtext = hasHint ? L"Receiving hints" : L"Connected and ready";
+            }
+            else if (bridgeStarted || bridgeBinding)
+            {
+                state.extensionIndicatorBrushKey = L"StatusConnectingBrush";
+                state.extensionText = L"Native host waiting";
+                state.extensionSubtext = L"Open a supported browser tab";
+            }
+            else
+            {
+                state.extensionIndicatorBrushKey = L"StatusDisconnectedBrush";
+                state.extensionText = L"Native host offline";
+                state.extensionSubtext = nativeHostRegistrationError.empty()
+                    ? L"Restart the app to refresh native-host registration"
+                    : (L"Registration refresh failed: " + nativeHostRegistrationError);
+            }
+
+            auto discordHealth = connected ? L"OK" : L"WAIT";
+            auto bridgeHealth = extensionConnected ? L"OK" : ((bridgeStarted || bridgeBinding) ? L"INIT" : L"DOWN");
+            auto hintAgeText = (hasHint && hintAgeSeconds >= 0)
+                ? (std::to_wstring(hintAgeSeconds) + L"s")
+                : std::wstring(L"--");
+            state.healthText = hstring(
+                std::wstring(L"Discord: ") + discordHealth +
+                L" | Extension: " + bridgeHealth +
+                L" | Hint age: " + hintAgeText);
+
+            const bool activePlayback = !m_lastMedia.title.empty() && m_lastMedia.isPlaying;
+            const bool recentPresencePush = m_lastPresencePushPlaying &&
+                ((std::chrono::steady_clock::now() - m_lastPresencePushAt) <= std::chrono::seconds(4));
+            state.showLiveBadge = connected && (activePlayback || recentPresencePush);
+        }
+
+        if (!m_lastMedia.title.empty())
+        {
+            if (positionSeconds < 0 || durationSeconds < 0)
+            {
+                int liveHintPos = 0;
+                int liveHintDur = 0;
+                if (TryGetLiveHintTimeline(m_lastMedia, liveHintPos, liveHintDur))
+                {
+                    if (positionSeconds < 0)
+                        positionSeconds = liveHintPos;
+                    if (durationSeconds < 0)
+                        durationSeconds = liveHintDur;
+                }
+            }
+
+            if (positionSeconds < 0)
+                positionSeconds = static_cast<int>(m_lastMedia.position.count());
+            if (durationSeconds < 0)
+                durationSeconds = static_cast<int>(m_lastMedia.duration.count());
+            if (positionSeconds < 0)
+                positionSeconds = 0;
+            if (durationSeconds < 0)
+                durationSeconds = 0;
+            if (durationSeconds > 0 && positionSeconds > durationSeconds)
+                positionSeconds = durationSeconds;
+
+            state.sourceValue = hstring(m_lastMedia.sourceDisplayName.empty() ? std::wstring(L"Unknown source") : m_lastMedia.sourceDisplayName);
+            state.sourceSubtext = hstring(m_lastMedia.sourceName.empty() ? std::wstring(L"Detected via Windows Media Controls") : m_lastMedia.sourceName);
+            state.detectedViaText = hstring(BuildDetectedViaLabel(m_lastMedia, m_lastMergeState));
+            state.miniTitle = hstring(m_lastMedia.title);
+            state.miniArtist = hstring(m_lastMedia.artist.empty() ? std::wstring(L"\x2014") : m_lastMedia.artist);
+            state.miniTimerText = hstring(FormatTime(positionSeconds) + L" / " + FormatTime(durationSeconds > 0 ? durationSeconds : 0));
+            state.miniStatusGlyph = m_lastMedia.isPlaying ? L"\xE768" : L"\xE769";
+            state.miniStatusText = m_lastMedia.isPlaying ? L"Live" : L"Paused";
+            state.miniStatusBrushKey = m_lastMedia.isPlaying ? L"AccentTextFillColorPrimaryBrush" : L"TextFillColorSecondaryBrush";
+            state.showPausedChip = !m_lastMedia.isPlaying;
+        }
+        else if (!m_enabled)
+        {
+            state.miniStatusGlyph = L"\xE711";
+            state.miniStatusText = L"Off";
+            state.miniStatusBrushKey = L"TextFillColorSecondaryBrush";
+        }
+
+        const auto& rawProductive = m_lastProductiveActivity;
+        bool productiveRawActive = rawProductive.active;
+        bool productiveRawAllowed = !productiveRawActive || IsProductiveAppEnabled(rawProductive);
+        bool productiveRawFiltered = productiveRawActive && !productiveRawAllowed;
+
+        if (!m_enabled)
+        {
+            state.productiveTitle = L"Rich Presence is off";
+            state.productiveSubtitle = L"Enable Rich Presence to run the Productive detector.";
+            state.productiveWindowText = L"None";
+            state.productiveProcessText = L"None";
+            state.productiveStatusText = L"Paused";
+            state.productiveStatusGlyph = L"\xE769";
+            state.productiveStatusBrushKey = L"TextFillColorSecondaryBrush";
+            state.productiveSourceValue = L"Productivity pipeline paused";
+            state.productiveSourceSubtext = L"Rich Presence is disabled.";
+            state.productiveDetectedViaText = L"Detected via --";
+            state.productiveDetectorText = L"Productivity detector paused";
+            state.productiveDetectorSubtext = L"Enable Rich Presence to resume.";
+            state.productiveDetectorBrushKey = L"StatusDisconnectedBrush";
+        }
+        else if (!m_productiveEnabled)
+        {
+            state.productiveTitle = L"Productive RPC disabled";
+            state.productiveSubtitle = L"Turn on Productive RPC in the Productive section.";
+            state.productiveWindowText = L"None";
+            state.productiveProcessText = L"None";
+            state.productiveStatusText = L"Disabled";
+            state.productiveStatusGlyph = L"\xE711";
+            state.productiveStatusBrushKey = L"TextFillColorSecondaryBrush";
+            state.productiveSourceValue = L"Productivity source disabled";
+            state.productiveSourceSubtext = L"Turn on Productive RPC in Productive settings.";
+            state.productiveDetectedViaText = L"Detected via --";
+            state.productiveDetectorText = L"Productivity detector off";
+            state.productiveDetectorSubtext = L"Productive pipeline toggle is off.";
+            state.productiveDetectorBrushKey = L"StatusDisconnectedBrush";
+        }
+        else if (productiveRawFiltered)
+        {
+            auto filteredLabel = buildProductiveAppLabel(rawProductive);
+            state.productiveTitle = hstring(filteredLabel + L" (filtered)");
+            state.productiveSubtitle = L"Enable this app in Productivity filters to allow activity.";
+            state.productiveWindowText = hstring(rawProductive.windowTitle.empty() ? std::wstring(L"None") : rawProductive.windowTitle);
+            state.productiveProcessText = hstring(buildProductiveProcessLabel(rawProductive));
+            state.productiveStatusText = L"Filtered";
+            state.productiveStatusGlyph = L"\xE711";
+            state.productiveStatusBrushKey = L"TextFillColorSecondaryBrush";
+            state.productiveSourceValue = hstring(filteredLabel + L" (filtered)");
+            state.productiveSourceSubtext = L"Blocked by your Productivity per-app filters.";
+            state.productiveDetectedViaText = hstring(productiveDetectedViaLabel());
+            state.productiveDetectorText = L"Productivity detector filtering";
+            state.productiveDetectorSubtext = L"App blocked by your Productivity app filter.";
+            state.productiveDetectorBrushKey = L"StatusConnectingBrush";
+        }
+        else if (!productiveRawActive)
+        {
+            state.productiveTitle = L"Awaiting Productive Activity";
+            state.productiveSubtitle = L"Launch a supported Office app to update your status.";
+            state.productiveWindowText = L"None";
+            state.productiveProcessText = L"None";
+            state.productiveStatusText = L"Waiting";
+            state.productiveStatusGlyph = L"\xE160";
+            state.productiveStatusBrushKey = L"TextFillColorSecondaryBrush";
+            state.productiveSourceValue = L"No active productivity source";
+            state.productiveSourceSubtext = L"Waiting for supported apps...";
+            state.productiveDetectedViaText = hstring(productiveDetectedViaLabel());
+            state.productiveDetectorText = L"Productivity detector waiting";
+            state.productiveDetectorSubtext = L"Waiting for supported apps...";
+            state.productiveDetectorBrushKey = L"StatusConnectingBrush";
+        }
+        else
+        {
+            std::wstring subtitle;
+            if (m_productiveShowProjectName && !rawProductive.projectHint.empty())
+                subtitle = L"Working on " + rawProductive.projectHint;
+            else
+                subtitle = L"Working in " + (rawProductive.appName.empty() ? std::wstring(L"Microsoft Office") : rawProductive.appName);
+
+            auto appLabel = buildProductiveAppLabel(rawProductive);
+            state.productiveTitle = hstring(appLabel);
+            state.productiveSubtitle = hstring(subtitle);
+            state.productiveWindowText = hstring(rawProductive.windowTitle.empty() ? std::wstring(L"None") : rawProductive.windowTitle);
+            state.productiveProcessText = hstring(buildProductiveProcessLabel(rawProductive));
+            state.productiveStatusText = L"Active";
+            state.productiveStatusGlyph = L"\xE768";
+            state.productiveStatusBrushKey = L"AccentTextFillColorPrimaryBrush";
+            state.productiveSourceValue = hstring(appLabel);
+            state.productiveSourceSubtext = L"Publishing current Office app.";
+            state.productiveDetectedViaText = hstring(productiveDetectedViaLabel());
+            state.productiveDetectorText = L"Productivity detector active";
+            state.productiveDetectorSubtext = hstring(L"Mode: " + ProductiveDetectionModeLabel(m_productiveDetectionMode));
+            state.productiveDetectorBrushKey = L"StatusConnectedBrush";
+        }
+
+        const auto& rawCreative = m_lastCreativeActivity;
+        bool creativeRawActive = rawCreative.active;
+        bool creativeRawAllowed = !creativeRawActive || IsCreativeAppEnabled(rawCreative);
+        bool creativeRawFiltered = creativeRawActive && !creativeRawAllowed;
+        bool clearImmediatelyMode = (m_creativeIdleBehavior == CreativeIdleBehavior::ClearImmediately);
+
+        CreativeActivityInfo displayCreative{};
+        bool showingHeld = false;
+        bool showDisplay = TryGetEffectiveCreativeActivityForRpc(displayCreative, showingHeld);
+
+        if (!m_enabled)
+        {
+            state.creativeTitle = L"Rich Presence is off";
+            state.creativeSubtitle = L"Enable Rich Presence to run the Creativity detector.";
+            state.creativeWindowText = L"--";
+            state.creativeProcessText = L"--";
+            state.creativeStatusText = L"Paused";
+            state.creativeStatusGlyph = L"\xE769";
+            state.creativeStatusBrushKey = L"TextFillColorSecondaryBrush";
+            state.creativeSourceValue = L"Creativity pipeline paused";
+            state.creativeSourceSubtext = L"Rich Presence is disabled.";
+            state.creativeDetectedViaText = L"Detected via --";
+            state.creativeDetectorText = L"Creativity detector paused";
+            state.creativeDetectorSubtext = L"Enable Rich Presence to resume.";
+            state.creativeDetectorBrushKey = L"StatusDisconnectedBrush";
+        }
+        else if (!m_creativeEnabled)
+        {
+            state.creativeTitle = L"Creativity RPC disabled";
+            state.creativeSubtitle = L"Turn on Creativity RPC in the Creativity section.";
+            state.creativeWindowText = L"--";
+            state.creativeProcessText = L"--";
+            state.creativeStatusText = L"Disabled";
+            state.creativeStatusGlyph = L"\xE711";
+            state.creativeStatusBrushKey = L"TextFillColorSecondaryBrush";
+            state.creativeSourceValue = L"Creativity source disabled";
+            state.creativeSourceSubtext = L"Turn on Creativity RPC in Creativity settings.";
+            state.creativeDetectedViaText = L"Detected via --";
+            state.creativeDetectorText = L"Creativity detector off";
+            state.creativeDetectorSubtext = L"Creativity pipeline toggle is off.";
+            state.creativeDetectorBrushKey = L"StatusDisconnectedBrush";
+        }
+        else if (!showDisplay)
+        {
+            if (creativeRawFiltered)
+            {
+                state.creativeStatusText = L"Filtered";
+                state.creativeStatusGlyph = L"\xE711";
+                state.creativeStatusBrushKey = L"TextFillColorSecondaryBrush";
+                if (m_creativePrivacyMode == CreativePrivacyMode::Private)
+                {
+                    state.creativeTitle = L"Creativity activity hidden";
+                    state.creativeSubtitle = L"(Filtered and hidden by privacy mode)";
+                    state.creativeWindowText = L"--";
+                    state.creativeProcessText = L"--";
+                    state.creativeSourceValue = L"Filtered creativity app";
+                    state.creativeSourceSubtext = L"Hidden by privacy mode.";
+                }
+                else if (m_creativePrivacyMode == CreativePrivacyMode::AppOnly)
+                {
+                    auto appLabel = buildCreativeAppLabel(rawCreative) + L" (filtered)";
+                    state.creativeTitle = hstring(appLabel);
+                    state.creativeSubtitle = L"Filtered by your per-app Creativity settings.";
+                    state.creativeWindowText = L"(Hidden by privacy mode)";
+                    state.creativeProcessText = L"(Hidden by privacy mode)";
+                    state.creativeSourceValue = hstring(appLabel);
+                    state.creativeSourceSubtext = L"Blocked by your per-app Creativity filters.";
+                }
+                else
+                {
+                    std::wstring windowText =
+                        (m_creativeShowWindowTitle && !rawCreative.windowTitle.empty())
+                            ? rawCreative.windowTitle
+                            : std::wstring(L"(Hidden by setting)");
+                    state.creativeTitle = hstring(buildCreativeAppLabel(rawCreative) + L" (filtered)");
+                    state.creativeSubtitle = L"Enable this app in Creativity filters to allow activity.";
+                    state.creativeWindowText = hstring(windowText);
+                    state.creativeProcessText = hstring(buildCreativeProcessLabel(rawCreative));
+                    state.creativeSourceValue = hstring(buildCreativeAppLabel(rawCreative) + L" (filtered)");
+                    state.creativeSourceSubtext = L"Enable this app in Creativity filters.";
+                }
+                state.creativeDetectedViaText = hstring(creativeDetectedViaLabel());
+                state.creativeDetectorText = L"Creativity detector filtering";
+                state.creativeDetectorSubtext = L"App blocked by your Creativity app filter.";
+                state.creativeDetectorBrushKey = L"StatusConnectingBrush";
+            }
+            else if (clearImmediatelyMode)
+            {
+                state.creativeTitle = L"Awaiting Creative Activity";
+                state.creativeSubtitle = L"No supported app detected (clear mode).";
+                state.creativeWindowText = L"None";
+                state.creativeProcessText = L"None";
+                state.creativeStatusText = L"Idle";
+                state.creativeStatusGlyph = L"\xE160";
+                state.creativeStatusBrushKey = L"TextFillColorSecondaryBrush";
+                state.creativeSourceValue = L"No active creativity source";
+                state.creativeSourceSubtext = L"Clear mode: idle source is cleared immediately.";
+                state.creativeDetectedViaText = hstring(creativeDetectedViaLabel());
+                state.creativeDetectorText = L"Creativity detector idle";
+                state.creativeDetectorSubtext = L"Waiting for supported apps...";
+                state.creativeDetectorBrushKey = L"StatusDisconnectedBrush";
+            }
+            else
+            {
+                state.creativeTitle = L"Awaiting Creative Activity";
+                state.creativeSubtitle = L"Launch a supported app to update your status.";
+                state.creativeWindowText = L"None";
+                state.creativeProcessText = L"None";
+                state.creativeStatusText = L"Waiting";
+                state.creativeStatusGlyph = L"\xE160";
+                state.creativeStatusBrushKey = L"TextFillColorSecondaryBrush";
+                state.creativeSourceValue = L"No active creativity source";
+                state.creativeSourceSubtext = L"Hold mode: waits before clearing recent app.";
+                state.creativeDetectedViaText = hstring(creativeDetectedViaLabel());
+                state.creativeDetectorText = L"Creativity detector waiting";
+                state.creativeDetectorSubtext = L"Waiting for supported apps...";
+                state.creativeDetectorBrushKey = L"StatusConnectingBrush";
+            }
+        }
+        else if (m_creativePrivacyMode == CreativePrivacyMode::Private)
+        {
+            state.creativeTitle = L"Creativity activity hidden";
+            state.creativeSubtitle = L"Private mode is enabled.";
+            state.creativeWindowText = L"(Private mode)";
+            state.creativeProcessText = L"(Private mode)";
+            state.creativeStatusText = L"Private";
+            state.creativeStatusGlyph = L"\xE72E";
+            state.creativeStatusBrushKey = L"TextFillColorSecondaryBrush";
+            state.creativeSourceValue = L"Creativity source hidden";
+            state.creativeSourceSubtext = L"Private mode is enabled.";
+            state.creativeDetectedViaText = hstring(creativeDetectedViaLabel());
+            state.creativeDetectorText = L"Creativity detector active";
+            state.creativeDetectorSubtext = L"Activity captured, details hidden.";
+            state.creativeDetectorBrushKey = L"StatusConnectedBrush";
+        }
+        else
+        {
+            auto appLabel = buildCreativeAppLabel(displayCreative);
+            if (showingHeld)
+                appLabel += L" (held)";
+
+            state.creativeStatusText = showingHeld ? L"Held" : L"Active";
+            state.creativeStatusGlyph = showingHeld ? L"\xE823" : L"\xE768";
+            state.creativeStatusBrushKey = L"AccentTextFillColorPrimaryBrush";
+            state.creativeDetectedViaText = hstring(creativeDetectedViaLabel());
+
+            if (m_creativePrivacyMode == CreativePrivacyMode::AppOnly)
+            {
+                state.creativeTitle = hstring(appLabel);
+                state.creativeSubtitle = L"(Details hidden by privacy mode)";
+                state.creativeWindowText = L"(Hidden by privacy mode)";
+                state.creativeProcessText = L"(Hidden by privacy mode)";
+                state.creativeSourceValue = hstring(appLabel);
+                state.creativeSourceSubtext = L"App-only privacy hides project and window details.";
+            }
+            else
+            {
+                std::wstring projectText;
+                if (!m_creativeShowProjectName)
+                    projectText = L"(Hidden by setting)";
+                else if (displayCreative.projectHint.empty())
+                    projectText = L"(No project title heuristic)";
+                else
+                    projectText = displayCreative.projectHint;
+
+                std::wstring windowText;
+                if (!m_creativeShowWindowTitle)
+                    windowText = L"(Hidden by debug setting)";
+                else if (displayCreative.windowTitle.empty())
+                    windowText = L"--";
+                else
+                    windowText = displayCreative.windowTitle;
+
+                state.creativeTitle = hstring(appLabel);
+                state.creativeSubtitle = hstring(projectText);
+                state.creativeWindowText = hstring(windowText);
+                state.creativeProcessText = hstring(buildCreativeProcessLabel(displayCreative));
+                state.creativeSourceValue = hstring(appLabel);
+                state.creativeSourceSubtext = hstring(
+                    showingHeld ? std::wstring(L"Holding last detected Adobe app.") : std::wstring(L"Publishing current Adobe app."));
+            }
+
+            state.creativeDetectorText = showingHeld ? L"Creativity detector holding" : L"Creativity detector active";
+            state.creativeDetectorSubtext = hstring(
+                L"Mode: " + CreativeDetectionModeLabel(m_creativeDetectionMode) +
+                L" | Idle: " + CreativeIdleBehaviorLabel(m_creativeIdleBehavior));
+            state.creativeDetectorBrushKey = showingHeld ? L"StatusConnectingBrush" : L"StatusConnectedBrush";
+        }
+
+        return state;
+    }
+
+    void MainWindow::InitializeRuntimeComponents()
+    {
         m_mediaDetector = std::make_shared<MediaDetector>();
         m_presence = std::make_shared<PresenceManager>();
         m_productiveDetector = std::make_shared<ProductiveDetector>();
@@ -1925,8 +2853,10 @@ namespace winrt::Last_Rich_Presence::implementation
         UpdateCreativePreview({});
         UpdateHomeCreativePreview();
         AppendDiagnosticLog(L"INFO", L"app", L"Main window initialized");
+    }
 
-        // Window size and title bar
+    void MainWindow::InitializeWindowChromeAndTray()
+    {
         auto appWindow = this->AppWindow();
         if (appWindow)
         {
@@ -1978,7 +2908,6 @@ namespace winrt::Last_Rich_Presence::implementation
                     sender.Resize({ kDefaultWindowWidth, kDefaultWindowHeight });
             });
 
-            // Custom title bar
             auto titleBar = appWindow.TitleBar();
             if (titleBar)
             {
@@ -1991,28 +2920,42 @@ namespace winrt::Last_Rich_Presence::implementation
         SetTitleBar(AppTitleBar());
         ApplyThemeMode();
         InitializeSystemTray();
-
-        SourceDebugToggle().Toggled({ this, &MainWindow::OnSourceDebugToggled });
-
         Closed([this](auto const&, auto const&)
         {
             ShutdownWindow();
         });
+    }
 
-        // Load persisted settings
+    void MainWindow::ApplyInitialSettingsAndVisibility()
+    {
         LoadSettings();
 
         m_isInitializing = false;
 
-        ApplyLaunchOnStartupState(m_launchOnStartup, false);
+        ApplyLaunchOnStartupState(m_launchOnStartup, false, true);
 
         if (m_startMinimizedToTray || IsStartMinimizedLaunchRequested())
         {
             if (!m_isShuttingDown)
-                HideWindowToTray();
+            {
+                if (m_trayController.IsReady())
+                {
+                    HideWindowToTray();
+                }
+                else
+                {
+                    Activate();
+                    AppendDiagnosticLog(
+                        L"WARN",
+                        L"tray",
+                        L"Start hidden requested, but tray initialization failed. Showing the main window instead.");
+                }
+            }
         }
+    }
 
-        // Route detector events to UI thread first, then update UI + presence there
+    void MainWindow::RegisterRuntimeCallbacks()
+    {
         auto lifetimeToken = m_lifetimeToken;
         m_mediaDetector->SetCallback([this, lifetimeToken, dispatcher = m_dispatcherQueue](const MediaInfo& info)
         {
@@ -2065,8 +3008,10 @@ namespace winrt::Last_Rich_Presence::implementation
                 OnMediaChanged(current);
             });
         });
+    }
 
-        // Start everything
+    void MainWindow::StartRuntimeServices()
+    {
         if (m_enabled)
             m_mediaDetector->Start();
         if (m_productiveDetector)
@@ -2116,13 +3061,53 @@ namespace winrt::Last_Rich_Presence::implementation
         }
         StartProgressTimer();
         StartBrowserHintServer();
-        AppendDiagnosticLog(L"INFO", L"bridge", L"Browser hint bridge started");
+        AppendDiagnosticLog(L"INFO", L"bridge", L"Browser native-host transport started");
+        auto nativeHostRegistrationError = lrp::browser::GetLastNativeHostRegistrationError();
+        if (!nativeHostRegistrationError.empty())
+        {
+            AppendDiagnosticLog(
+                L"WARN",
+                L"bridge",
+                L"Browser native-host registration refresh failed: " + nativeHostRegistrationError);
+        }
         SyncProductiveRpcOutput();
         SyncCreativeRpcOutput();
         if (!m_enabled)
             ApplyGlobalEnableRuntimeState();
         else
             UpdateConnectionStatus();
+    }
+
+    // =====================================================================
+    // Initialization
+    // =====================================================================
+
+    void MainWindow::InitWindow()
+    {
+        m_isInitializing = true;
+        InitializeComponent();
+        InitializePageRouting(*this);
+        m_windowInitialized = true;
+        m_dispatcherQueue = Microsoft::UI::Dispatching::DispatcherQueue::GetForCurrentThread();
+        RefreshDiagnosticsPanel();
+
+        try
+        {
+            auto uiSettings = Windows::UI::ViewManagement::UISettings();
+            m_reduceMotionRequested = !uiSettings.AnimationsEnabled();
+        }
+        catch (...)
+        {
+            m_reduceMotionRequested = false;
+        }
+
+        ConfigurePageControlCallbacks();
+        InitializeShellNavigation();
+        InitializeRuntimeComponents();
+        InitializeWindowChromeAndTray();
+        ApplyInitialSettingsAndVisibility();
+        RegisterRuntimeCallbacks();
+        StartRuntimeServices();
     }
 
     void MainWindow::HandleRedirectedActivation()
@@ -2133,9 +3118,6 @@ namespace winrt::Last_Rich_Presence::implementation
 
     void MainWindow::InitializeSystemTray()
     {
-        if (m_windowHandle)
-            return;
-
         auto windowNative = this->try_as<IWindowNative>();
         if (!windowNative)
             return;
@@ -2144,194 +3126,278 @@ namespace winrt::Last_Rich_Presence::implementation
         if (FAILED(windowNative->get_WindowHandle(&hwnd)) || !hwnd)
             return;
 
-        m_windowHandle = hwnd;
-
-        SetLastError(0);
-        auto previousWndProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(
-            m_windowHandle,
-            GWLP_WNDPROC,
-            reinterpret_cast<LONG_PTR>(&MainWindow::TrayWindowProc)));
-        if (!previousWndProc && GetLastError() != 0)
-        {
-            m_windowHandle = nullptr;
-            AppendDiagnosticLog(L"WARN", L"tray", L"Failed to hook window procedure");
-            return;
-        }
-
-        m_originalWndProc = previousWndProc;
-        {
-            std::lock_guard<std::mutex> lock(GetTrayWindowStateMutex());
-            GetTrayWindowStateMap()[m_windowHandle] = { this, m_originalWndProc };
-        }
-
-        NOTIFYICONDATAW nid{};
-        nid.cbSize = sizeof(nid);
-        nid.hWnd = m_windowHandle;
-        nid.uID = kTrayIconId;
-        nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
-        nid.uCallbackMessage = kTrayCallbackMessage;
-        wcscpy_s(nid.szTip, L"Last Rich Presence");
-
         auto iconPath = GetExecutableDirectory() / L"Assets" / L"logo.ico";
-        if (std::filesystem::exists(iconPath))
+        m_trayController.SetBeforeShowCallback([this]()
         {
-            m_trayIconHandle = static_cast<HICON>(LoadImageW(
-                nullptr,
-                iconPath.c_str(),
-                IMAGE_ICON,
-                0,
-                0,
-                LR_LOADFROMFILE | LR_DEFAULTSIZE));
-            m_trayIconOwned = (m_trayIconHandle != nullptr);
-        }
+            Activate();
+        });
+        m_trayController.SetLogCallback([this](std::wstring const& level,
+                                               std::wstring const& component,
+                                               std::wstring const& message)
+        {
+            AppendDiagnosticLog(level, component, message);
+        });
+        m_trayController.SetMenuCommandCallback([this](lrp::ui::TrayMenuCommand command)
+        {
+            HandleTrayMenuCommand(command);
+        });
+        m_trayController.SetShouldInterceptCloseCallback([this]()
+        {
+            return !m_isShuttingDown && !m_exitRequested;
+        });
+        m_trayController.SetVisibilityChangedCallback([this](bool visible)
+        {
+            if (visible)
+            {
+                bool resumeWave = !m_lastMedia.title.empty() && m_lastMedia.isPlaying;
+                SetSongWaveActive(resumeWave);
+                SetHomeMiniWaveActive(resumeWave);
+                UpdateConnectionStatus();
+                return;
+            }
 
-        if (!m_trayIconHandle)
-        {
-            m_trayIconHandle = LoadIconW(nullptr, IDI_APPLICATION);
-            m_trayIconOwned = false;
-        }
-
-        nid.hIcon = m_trayIconHandle;
-
-        if (Shell_NotifyIconW(NIM_ADD, &nid))
-        {
-            nid.uVersion = NOTIFYICON_VERSION_4;
-            Shell_NotifyIconW(NIM_SETVERSION, &nid);
-            m_trayIconAdded = true;
-            AppendDiagnosticLog(L"INFO", L"tray", L"System tray icon initialized");
-        }
-        else
-        {
-            AppendDiagnosticLog(L"WARN", L"tray", L"Failed to add system tray icon");
-            CleanupSystemTray();
-        }
+            SetSongWaveActive(false);
+            SetHomeMiniWaveActive(false);
+            SetLivePulseActive(false);
+            HideTrackTransitionSkeleton();
+        });
+        m_trayController.SetCloseToTrayOnClose(m_closeToTrayOnClose);
+        m_trayController.SetTrayLeftClickToggles(m_trayLeftClickToggles);
+        m_trayController.SetPresenceEnabled(m_enabled);
+        const bool trayInitialized = m_trayController.Initialize(hwnd, iconPath);
+        if (!trayInitialized)
+            AppendDiagnosticLog(L"WARN", L"tray", L"Tray controller failed to initialize");
     }
 
     void MainWindow::CleanupSystemTray()
     {
-        if (m_trayIconAdded && m_windowHandle)
-        {
-            NOTIFYICONDATAW nid{};
-            nid.cbSize = sizeof(nid);
-            nid.hWnd = m_windowHandle;
-            nid.uID = kTrayIconId;
-            Shell_NotifyIconW(NIM_DELETE, &nid);
-            m_trayIconAdded = false;
-        }
-
-        if (m_trayIconHandle && m_trayIconOwned)
-            DestroyIcon(m_trayIconHandle);
-        m_trayIconHandle = nullptr;
-        m_trayIconOwned = false;
-
-        if (m_windowHandle && m_originalWndProc)
-        {
-            SetWindowLongPtrW(
-                m_windowHandle,
-                GWLP_WNDPROC,
-                reinterpret_cast<LONG_PTR>(m_originalWndProc));
-        }
-
-        if (m_windowHandle)
-        {
-            std::lock_guard<std::mutex> lock(GetTrayWindowStateMutex());
-            GetTrayWindowStateMap().erase(m_windowHandle);
-        }
-
-        m_originalWndProc = nullptr;
-        m_windowHandle = nullptr;
-    }
-
-    void MainWindow::ShowTrayContextMenu()
-    {
-        if (!m_windowHandle)
-            return;
-
-        auto menu = CreatePopupMenu();
-        if (!menu)
-            return;
-
-        auto showHideText = IsWindowVisible(m_windowHandle) ? L"Hide window" : L"Show window";
-        auto togglePresenceText = m_enabled ? L"Disable Rich Presence" : L"Enable Rich Presence";
-
-        AppendMenuW(menu, MF_STRING, kTrayMenuShowHide, showHideText);
-        AppendMenuW(menu, MF_STRING, kTrayMenuTogglePresence, togglePresenceText);
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(menu, MF_STRING, kTrayMenuExit, L"Exit");
-
-        POINT point{};
-        GetCursorPos(&point);
-        SetForegroundWindow(m_windowHandle);
-
-        auto command = TrackPopupMenu(
-            menu,
-            TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
-            point.x,
-            point.y,
-            0,
-            m_windowHandle,
-            nullptr);
-
-        DestroyMenu(menu);
-
-        if (command != 0)
-            HandleTrayMenuCommand(static_cast<uint32_t>(command));
-
-        PostMessageW(m_windowHandle, WM_NULL, 0, 0);
+        m_trayController.Shutdown();
     }
 
     void MainWindow::ShowWindowFromTray()
     {
-        if (!m_windowHandle)
-            return;
-
-        // If app started hidden, the XAML window may not have been activated yet.
+        m_trayController.ShowFromTray();
         Activate();
-        ShowWindow(m_windowHandle, SW_SHOW);
-        ShowWindow(m_windowHandle, SW_RESTORE);
-        SetForegroundWindow(m_windowHandle);
-        m_hiddenToTray = false;
-
-        bool resumeWave = !m_lastMedia.title.empty() && m_lastMedia.isPlaying;
-        SetSongWaveActive(resumeWave);
-        SetHomeMiniWaveActive(resumeWave);
-        UpdateConnectionStatus();
     }
 
     void MainWindow::HideWindowToTray()
     {
-        if (!m_windowHandle || m_hiddenToTray)
-            return;
-
-        ShowWindow(m_windowHandle, SW_HIDE);
-        m_hiddenToTray = true;
-        SetSongWaveActive(false);
-        SetHomeMiniWaveActive(false);
-        SetLivePulseActive(false);
-        HideTrackTransitionSkeleton();
-        AppendDiagnosticLog(L"INFO", L"tray", L"Window minimized to system tray");
+        m_trayController.HideToTray();
     }
 
     void MainWindow::ToggleWindowVisibilityFromTray()
     {
-        auto now = std::chrono::steady_clock::now();
-        if (m_lastTrayToggleAt.time_since_epoch().count() > 0)
-        {
-            auto sinceLastToggle = now - m_lastTrayToggleAt;
-            if (sinceLastToggle < std::chrono::milliseconds(250))
-                return;
-        }
-        m_lastTrayToggleAt = now;
-
-        if (m_windowHandle && IsWindowVisible(m_windowHandle))
-            HideWindowToTray();
-        else
-            ShowWindowFromTray();
+        m_trayController.ToggleVisibility();
     }
 
-    void MainWindow::ApplyLaunchOnStartupState(bool enabled, bool userInitiated)
+    void MainWindow::HandleHomeEnableToggled(bool enabled)
     {
-        auto applyTask = [](winrt::weak_ref<MainWindow> weak, bool enabledValue, bool userInitiatedValue) -> winrt::fire_and_forget
+        if (m_enabled == enabled)
+            return;
+
+        m_enabled = enabled;
+        m_settings.behavior.richPresenceEnabled = enabled;
+
+        ApplyProductiveRuntimeState();
+        ApplyCreativeDetectorRuntimeState();
+        ApplyGlobalEnableRuntimeState();
+        SaveSettings();
+        UpdateConnectionStatus();
+    }
+
+    void MainWindow::HandleMusicSettingsChanged(lrp::ui::MusicPageSettings const& settings)
+    {
+        if (settings == lrp::ui::BuildMusicPageSettings(m_settings))
+            return;
+
+        lrp::ui::ApplyMusicPageSettings(m_settings, settings);
+        SyncMusicSettingsFromControls();
+        UpdateUI(m_lastMedia);
+        RefreshMediaPresenceOutput();
+        SaveSettings();
+    }
+
+    void MainWindow::HandleProductivitySettingsChanged(lrp::ui::ProductivityPageSettings const& settings)
+    {
+        if (settings == lrp::ui::BuildProductivityPageSettings(m_settings))
+            return;
+
+        lrp::ui::ApplyProductivityPageSettings(m_settings, settings);
+        SyncProductiveSettingsFromControls();
+        ApplyProductiveRuntimeState();
+        UpdateProductivePreview(m_lastProductiveActivity);
+        SaveSettings();
+    }
+
+    void MainWindow::HandleProductivitySelectAll()
+    {
+        auto settings = lrp::ui::BuildProductivityPageSettings(m_settings);
+        settings.wordEnabled = true;
+        settings.excelEnabled = true;
+        settings.powerPointEnabled = true;
+        settings.oneNoteEnabled = true;
+        settings.accessEnabled = true;
+        settings.publisherEnabled = true;
+        settings.visioEnabled = true;
+        settings.projectEnabled = true;
+        settings.codexEnabled = true;
+        HandleProductivitySettingsChanged(settings);
+    }
+
+    void MainWindow::HandleProductivityDeselectAll()
+    {
+        auto settings = lrp::ui::BuildProductivityPageSettings(m_settings);
+        settings.wordEnabled = false;
+        settings.excelEnabled = false;
+        settings.powerPointEnabled = false;
+        settings.oneNoteEnabled = false;
+        settings.accessEnabled = false;
+        settings.publisherEnabled = false;
+        settings.visioEnabled = false;
+        settings.projectEnabled = false;
+        settings.codexEnabled = false;
+        HandleProductivitySettingsChanged(settings);
+    }
+
+    void MainWindow::HandleCreativeSettingsChanged(lrp::ui::CreativePageSettings const& settings)
+    {
+        if (settings == lrp::ui::BuildCreativePageSettings(m_settings))
+            return;
+
+        lrp::ui::ApplyCreativePageSettings(m_settings, settings);
+        SyncCreativeSettingsFromControls();
+        ApplyCreativeDetectorRuntimeState();
+        RefreshCreativePreviewFromCurrentState();
+        SaveSettings();
+    }
+
+    void MainWindow::HandleCreativeSelectAll()
+    {
+        auto settings = lrp::ui::BuildCreativePageSettings(m_settings);
+        settings.photoshopEnabled = true;
+        settings.illustratorEnabled = true;
+        settings.premiereEnabled = true;
+        settings.afterEffectsEnabled = true;
+        settings.inDesignEnabled = true;
+        settings.auditionEnabled = true;
+        settings.mediaEncoderEnabled = true;
+        settings.lightroomEnabled = true;
+        settings.lightroomClassicEnabled = true;
+        settings.inCopyEnabled = true;
+        settings.dreamweaverEnabled = true;
+        settings.animateEnabled = true;
+        settings.xdEnabled = true;
+        settings.bridgeEnabled = true;
+        settings.characterAnimatorEnabled = true;
+        settings.frescoEnabled = true;
+        settings.dimensionEnabled = true;
+        settings.substanceEnabled = true;
+        settings.acrobatEnabled = true;
+        settings.otherAdobeEnabled = true;
+        HandleCreativeSettingsChanged(settings);
+    }
+
+    void MainWindow::HandleCreativeDeselectAll()
+    {
+        auto settings = lrp::ui::BuildCreativePageSettings(m_settings);
+        settings.photoshopEnabled = false;
+        settings.illustratorEnabled = false;
+        settings.premiereEnabled = false;
+        settings.afterEffectsEnabled = false;
+        settings.inDesignEnabled = false;
+        settings.auditionEnabled = false;
+        settings.mediaEncoderEnabled = false;
+        settings.lightroomEnabled = false;
+        settings.lightroomClassicEnabled = false;
+        settings.inCopyEnabled = false;
+        settings.dreamweaverEnabled = false;
+        settings.animateEnabled = false;
+        settings.xdEnabled = false;
+        settings.bridgeEnabled = false;
+        settings.characterAnimatorEnabled = false;
+        settings.frescoEnabled = false;
+        settings.dimensionEnabled = false;
+        settings.substanceEnabled = false;
+        settings.acrobatEnabled = false;
+        settings.otherAdobeEnabled = false;
+        HandleCreativeSettingsChanged(settings);
+    }
+
+    void MainWindow::HandleSettingsPageSettingsChanged(lrp::ui::SettingsPageSettings const& settings)
+    {
+        auto currentSettings = lrp::ui::BuildSettingsPageSettings(m_settings);
+        currentSettings.blockedAppSitesRaw = settings.blockedAppSitesRaw;
+        if (settings == currentSettings)
+            return;
+
+        auto const launchOnStartupChanged = currentSettings.launchOnStartup != settings.launchOnStartup;
+        auto const startupLaunchModeChanged =
+            currentSettings.startMinimizedToTray != settings.startMinimizedToTray &&
+            settings.launchOnStartup;
+
+        lrp::ui::ApplySettingsPageSettings(m_settings, settings, false);
+        SyncShellSettingsFromControls();
+
+        if (m_presence)
+        {
+            m_presence->SetShowIdleStatus(m_settings.media.showDefaultIdleStatus);
+            m_presence->SetSensitiveKeywordFilter(m_settings.media.sensitiveKeywordFilter);
+            m_presence->SetStrictBrowserPrivacy(m_settings.media.strictBrowserPrivacy);
+            m_presence->SetSuppressBrowserAlbumArt(m_settings.media.suppressBrowserAlbumArt);
+        }
+
+        ApplyThemeMode();
+        ApplyActivityTypeOverrides();
+        RefreshMediaPresenceOutput();
+        SyncProductiveRpcOutput();
+        RefreshCreativePreviewFromCurrentState();
+
+        if (launchOnStartupChanged)
+        {
+            ApplyLaunchOnStartupState(m_settings.behavior.launchOnStartup, true, true);
+            return;
+        }
+
+        if (startupLaunchModeChanged)
+        {
+            ApplyLaunchOnStartupState(m_settings.behavior.launchOnStartup, false, true);
+            return;
+        }
+
+        SaveSettings();
+    }
+
+    void MainWindow::HandleApplyBlockedTerms(winrt::hstring const& blockedTermsRaw)
+    {
+        auto const blockedTerms = std::wstring(blockedTermsRaw);
+        if (m_settings.media.blockedAppSiteTermsRaw == blockedTerms)
+        {
+            SettingsPageControlImpl()->ApplySettings(lrp::ui::BuildSettingsPageSettings(m_settings));
+            return;
+        }
+
+        m_settings.media.blockedAppSiteTermsRaw = blockedTerms;
+        SyncShellSettingsFromControls();
+        SettingsPageControlImpl()->ApplySettings(lrp::ui::BuildSettingsPageSettings(m_settings));
+
+        if (m_presence)
+            m_presence->SetBlockedAppSiteTerms(ParseBlockedTerms(m_blockedAppSiteTermsRaw));
+
+        SaveSettings();
+
+        if (m_enabled && m_mediaDetector)
+            OnMediaChanged(m_mediaDetector->GetCurrentMedia());
+    }
+
+    void MainWindow::ApplyLaunchOnStartupState(bool enabled, bool userInitiated, bool persistSettings)
+    {
+        auto requestVersion = ++m_launchOnStartupRequestVersion;
+
+        auto applyTask = [](winrt::weak_ref<MainWindow> weak,
+                            bool enabledValue,
+                            bool userInitiatedValue,
+                            bool persistValue,
+                            uint64_t requestVersionValue) -> winrt::fire_and_forget
         {
             auto strong = weak.get();
             if (!strong)
@@ -2441,14 +3507,27 @@ namespace winrt::Last_Rich_Presence::implementation
             if (!strong)
                 co_return;
 
+            if (requestVersionValue != strong->m_launchOnStartupRequestVersion)
+            {
+                strong->ApplyLaunchOnStartupState(strong->m_settings.behavior.launchOnStartup, false, true);
+                co_return;
+            }
+
+            auto const shouldPersistResolvedState =
+                persistValue &&
+                strong->m_settings.behavior.launchOnStartup != applied;
+
             strong->m_launchOnStartup = applied;
+            strong->m_settings.behavior.launchOnStartup = applied;
+            strong->SyncShellSettingsFromControls();
 
             bool initBefore = strong->m_isInitializing;
             strong->m_isInitializing = true;
-            strong->LaunchOnStartupToggle().IsOn(applied);
+            strong->SettingsPageControlImpl()->ApplySettings(lrp::ui::BuildSettingsPageSettings(strong->m_settings));
             strong->m_isInitializing = initBefore;
 
-            strong->SaveSettings();
+            if (shouldPersistResolvedState)
+                strong->SaveSettings();
 
             if (userInitiatedValue)
             {
@@ -2467,20 +3546,17 @@ namespace winrt::Last_Rich_Presence::implementation
             }
         };
 
-        applyTask(get_weak(), enabled, userInitiated);
+        applyTask(get_weak(), enabled, userInitiated, persistSettings, requestVersion);
     }
 
-    void MainWindow::HandleTrayMenuCommand(uint32_t commandId)
+    void MainWindow::HandleTrayMenuCommand(lrp::ui::TrayMenuCommand command)
     {
-        switch (commandId)
+        switch (command)
         {
-        case kTrayMenuShowHide:
-            ToggleWindowVisibilityFromTray();
+        case lrp::ui::TrayMenuCommand::TogglePresence:
+            HandleHomeEnableToggled(!m_enabled);
             break;
-        case kTrayMenuTogglePresence:
-            EnableToggle().IsOn(!EnableToggle().IsOn());
-            break;
-        case kTrayMenuExit:
+        case lrp::ui::TrayMenuCommand::Exit:
             m_exitRequested = true;
             AppendDiagnosticLog(L"INFO", L"tray", L"Exit requested from system tray");
             CleanupSystemTray();
@@ -2491,117 +3567,32 @@ namespace winrt::Last_Rich_Presence::implementation
         }
     }
 
-    bool MainWindow::TryHandleTrayWindowMessage(HWND, UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result)
-    {
-        result = 0;
-
-        if (message == WM_CLOSE)
-        {
-            if (!m_isShuttingDown && !m_exitRequested && m_closeToTrayOnClose && GetSystemMetrics(SM_SHUTTINGDOWN) == 0)
-            {
-                HideWindowToTray();
-                return true;
-            }
-
-            return false;
-        }
-
-        if (message == WM_COMMAND)
-        {
-            auto commandId = static_cast<uint32_t>(LOWORD(wParam));
-            if (commandId == kTrayMenuShowHide || commandId == kTrayMenuTogglePresence || commandId == kTrayMenuExit)
-            {
-                HandleTrayMenuCommand(commandId);
-                return true;
-            }
-
-            return false;
-        }
-
-        if (message == kTrayCallbackMessage)
-        {
-            UINT iconId = 0;
-            UINT eventCode = 0;
-
-            auto eventLowWord = LOWORD(static_cast<DWORD_PTR>(lParam));
-            auto eventHighWord = HIWORD(static_cast<DWORD_PTR>(lParam));
-
-            bool looksLikeV4Message =
-                eventLowWord == WM_CONTEXTMENU ||
-                eventLowWord == WM_RBUTTONUP ||
-                eventLowWord == WM_LBUTTONUP ||
-                eventLowWord == WM_LBUTTONDBLCLK ||
-                eventLowWord == NIN_SELECT ||
-                eventLowWord == NIN_KEYSELECT;
-
-            if (looksLikeV4Message)
-            {
-                iconId = eventHighWord;
-                eventCode = eventLowWord;
-            }
-            else
-            {
-                iconId = static_cast<UINT>(wParam);
-                eventCode = static_cast<UINT>(lParam);
-            }
-
-            if (iconId != kTrayIconId)
-                return false;
-
-            if (eventCode == WM_CONTEXTMENU || eventCode == WM_RBUTTONUP)
-            {
-                ShowTrayContextMenu();
-                return true;
-            }
-
-            if (eventCode == WM_LBUTTONUP || eventCode == WM_LBUTTONDBLCLK || eventCode == NIN_SELECT || eventCode == NIN_KEYSELECT)
-            {
-                if (m_trayLeftClickToggles)
-                    ToggleWindowVisibilityFromTray();
-                else
-                    ShowWindowFromTray();
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    LRESULT CALLBACK MainWindow::TrayWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
-    {
-        MainWindow* currentWindow = nullptr;
-        WNDPROC originalWndProc = nullptr;
-
-        {
-            std::lock_guard<std::mutex> lock(GetTrayWindowStateMutex());
-            auto it = GetTrayWindowStateMap().find(hwnd);
-            if (it != GetTrayWindowStateMap().end())
-            {
-                currentWindow = it->second.window;
-                originalWndProc = it->second.originalWndProc;
-            }
-        }
-
-        LRESULT result = 0;
-        if (currentWindow && currentWindow->TryHandleTrayWindowMessage(hwnd, message, wParam, lParam, result))
-            return result;
-
-        if (originalWndProc)
-            return CallWindowProcW(originalWndProc, hwnd, message, wParam, lParam);
-
-        return DefWindowProcW(hwnd, message, wParam, lParam);
-    }
-
     // =====================================================================
     // Navigation
     // =====================================================================
 
     bool MainWindow::IsMotionEnabled() const
     {
-        if (m_isShuttingDown || m_hiddenToTray || m_reduceMotionRequested)
+        if (m_isShuttingDown)
             return false;
 
-        if (m_windowHandle && IsIconic(m_windowHandle))
+        bool reduceMotionRequested = m_reduceMotionRequested;
+        try
+        {
+            auto uiSettings = Windows::UI::ViewManagement::UISettings();
+            reduceMotionRequested = !uiSettings.AnimationsEnabled();
+        }
+        catch (...)
+        {
+        }
+
+        if (reduceMotionRequested)
+            return false;
+
+        if (m_trayController.IsHiddenToTray())
+            return false;
+
+        if (m_trayController.IsWindowIconic())
             return false;
 
         return true;
@@ -2784,75 +3775,48 @@ namespace winrt::Last_Rich_Presence::implementation
 
     void MainWindow::OnNavSelectionChanged(NavigationView const&, NavigationViewSelectionChangedEventArgs const& args)
     {
-        auto selectedItem = args.SelectedItem().try_as<NavigationViewItem>();
-        if (!selectedItem) return;
-
-        auto tag = unbox_value_or<hstring>(selectedItem.Tag(), L"");
-        if (tag.empty()) return;
-
-        auto pageForTag = [this](hstring const& pageTag) -> FrameworkElement
-        {
-            if (pageTag == L"Home") return HomePage();
-            if (pageTag == L"Music") return MusicPage();
-            if (pageTag == L"Productivity") return ProductivityPage();
-            if (pageTag == L"Creative") return CreativePage();
-            if (pageTag == L"Settings") return SettingsPage();
-            return nullptr;
-        };
-
-        auto showOnlyPage = [this](hstring const& visibleTag)
-        {
-            HomePage().Visibility(visibleTag == L"Home" ? Visibility::Visible : Visibility::Collapsed);
-            MusicPage().Visibility(visibleTag == L"Music" ? Visibility::Visible : Visibility::Collapsed);
-            ProductivityPage().Visibility(visibleTag == L"Productivity" ? Visibility::Visible : Visibility::Collapsed);
-            CreativePage().Visibility(visibleTag == L"Creative" ? Visibility::Visible : Visibility::Collapsed);
-            SettingsPage().Visibility(visibleTag == L"Settings" ? Visibility::Visible : Visibility::Collapsed);
-        };
-
-        auto resetScrollTop = [](FrameworkElement const& page)
-        {
-            auto scrollViewer = page.try_as<ScrollViewer>();
-            if (!scrollViewer)
-                return;
-
-            if (scrollViewer.VerticalOffset() <= 0.5)
-                return;
-
-            try
-            {
-                scrollViewer.ChangeView(nullptr, 0.0, nullptr, true);
-            }
-            catch (...) {}
-        };
-
-        auto incoming = pageForTag(tag);
-        if (!incoming)
+        if (!m_windowInitialized)
             return;
 
-        if (m_pageTransitionInProgress)
+        auto selectedItem = args.SelectedItem().try_as<NavigationViewItem>();
+        if (!selectedItem)
+            return;
+
+        auto tag = unbox_value_or<hstring>(selectedItem.Tag(), L"");
+        auto page = lrp::ui::TryAppPageFromTag(tag.c_str());
+        if (!page)
         {
-            if (tag != hstring(m_activePageTag))
-                m_queuedPageTag = tag.c_str();
+            auto tagText = std::wstring(tag.c_str());
+            if (tagText.empty())
+                tagText = L"<empty>";
+
+            AppendDiagnosticLog(L"WARN", L"navigation", L"Ignored unknown navigation tag: " + tagText);
+            if (auto activeNavItem = NavItemForPage(m_activePage))
+                NavView().SelectedItem(activeNavItem);
             return;
         }
 
-        if (tag == hstring(m_activePageTag))
+        auto incoming = PageHost(*page);
+        if (!incoming)
+        {
+            if (auto activeNavItem = NavItemForPage(m_activePage))
+                NavView().SelectedItem(activeNavItem);
+            return;
+        }
+
+        if (m_pageTransitionInProgress)
+        {
+            if (*page != m_activePage)
+                m_queuedPage = *page;
+            return;
+        }
+
+        if (*page == m_activePage)
             return;
 
-        auto outgoing = pageForTag(hstring(m_activePageTag));
-
-        auto pageOrder = [](hstring const& value)
-        {
-            if (value == L"Home") return 0;
-            if (value == L"Music") return 1;
-            if (value == L"Creative") return 2;
-            if (value == L"Productivity") return 3;
-            if (value == L"Settings") return 4;
-            return 0;
-        };
-
-        bool forward = pageOrder(tag) >= pageOrder(hstring(m_activePageTag));
-        bool involvesSettings = (tag == L"Settings" || hstring(m_activePageTag) == L"Settings");
+        auto outgoing = PageHost(m_activePage);
+        bool forward = lrp::ui::IsForwardAppPageTransition(m_activePage, *page);
+        bool involvesSettings = (*page == lrp::ui::AppPage::Settings || m_activePage == lrp::ui::AppPage::Settings);
         double incomingOffset = involvesSettings ? 10.0 : 16.0;
         double outgoingOffset = involvesSettings ? 6.0 : 10.0;
 
@@ -2861,15 +3825,15 @@ namespace winrt::Last_Rich_Presence::implementation
             try { m_pageTransitionStoryboard.Stop(); } catch (...) {}
             m_pageTransitionStoryboard = nullptr;
             m_pageTransitionInProgress = false;
-            showOnlyPage(hstring(m_activePageTag));
+            ShowOnlyPage(m_activePage);
         }
 
-        resetScrollTop(incoming);
+        ResetPageScrollPosition(*page);
 
         if (!IsMotionEnabled() || !outgoing || outgoing == incoming)
         {
-            showOnlyPage(tag);
-            m_activePageTag = tag.c_str();
+            ShowOnlyPage(*page);
+            m_activePage = *page;
             m_pageTransitionInProgress = false;
             return;
         }
@@ -2935,97 +3899,79 @@ namespace winrt::Last_Rich_Presence::implementation
         Microsoft::UI::Xaml::Media::Animation::Storyboard::SetTargetProperty(inShift, L"X");
 
         auto weak = get_weak();
-        auto outgoingTag = hstring(m_activePageTag);
-        auto incomingTag = tag;
-        storyboard.Completed([weak, outgoingTag, incomingTag](IInspectable const&, IInspectable const&)
+        auto outgoingPage = m_activePage;
+        auto incomingPage = *page;
+        storyboard.Completed([weak, outgoingPage, incomingPage](IInspectable const&, IInspectable const&)
         {
             auto strong = weak.get();
             if (!strong)
                 return;
 
-            auto pageForTagInner = [strong](hstring const& pageTag) -> FrameworkElement
-            {
-                if (pageTag == L"Home") return strong->HomePage();
-                if (pageTag == L"Music") return strong->MusicPage();
-                if (pageTag == L"Productivity") return strong->ProductivityPage();
-                if (pageTag == L"Creative") return strong->CreativePage();
-                if (pageTag == L"Settings") return strong->SettingsPage();
-                return nullptr;
-            };
+            auto outgoingHost = strong->PageHost(outgoingPage);
+            auto incomingHost = strong->PageHost(incomingPage);
 
-            auto outgoingPage = pageForTagInner(outgoingTag);
-            auto incomingPage = pageForTagInner(incomingTag);
-
-            if (outgoingPage)
+            if (outgoingHost)
             {
-                outgoingPage.Visibility(Visibility::Collapsed);
-                outgoingPage.Opacity(1.0);
-                if (auto transform = outgoingPage.RenderTransform().try_as<TranslateTransform>())
+                outgoingHost.Visibility(Visibility::Collapsed);
+                outgoingHost.Opacity(1.0);
+                if (auto transform = outgoingHost.RenderTransform().try_as<TranslateTransform>())
                     transform.X(0.0);
             }
 
-            if (incomingPage)
+            if (incomingHost)
             {
-                incomingPage.Visibility(Visibility::Visible);
-                incomingPage.Opacity(1.0);
-                if (auto transform = incomingPage.RenderTransform().try_as<TranslateTransform>())
+                incomingHost.Visibility(Visibility::Visible);
+                incomingHost.Opacity(1.0);
+                if (auto transform = incomingHost.RenderTransform().try_as<TranslateTransform>())
                     transform.X(0.0);
             }
 
             strong->m_pageTransitionStoryboard = nullptr;
             strong->m_pageTransitionInProgress = false;
 
-            auto queuedTag = hstring(strong->m_queuedPageTag);
-            strong->m_queuedPageTag.clear();
-            if (queuedTag.empty() || queuedTag == incomingTag)
+            auto queuedPage = strong->m_queuedPage;
+            strong->m_queuedPage.reset();
+            if (!queuedPage || *queuedPage == incomingPage)
                 return;
 
-            auto queuedPage = pageForTagInner(queuedTag);
-            if (!queuedPage)
+            auto queuedHost = strong->PageHost(*queuedPage);
+            if (!queuedHost)
                 return;
 
-            auto navItemForTagInner = [strong](hstring const& pageTag) -> NavigationViewItem
-            {
-                if (pageTag == L"Home") return strong->HomeNavItem();
-                if (pageTag == L"Music") return strong->MusicNavItem();
-                if (pageTag == L"Productivity") return strong->ProductivityNavItem();
-                if (pageTag == L"Creative") return strong->CreativeNavItem();
-                if (pageTag == L"Settings") return strong->SettingsNavItem();
-                return nullptr;
-            };
-
-            auto queuedItem = navItemForTagInner(queuedTag);
+            auto queuedItem = strong->NavItemForPage(*queuedPage);
             if (!queuedItem)
                 return;
 
             auto navView = strong->NavView();
             auto selected = navView.SelectedItem().try_as<NavigationViewItem>();
             auto selectedTag = selected ? unbox_value_or<hstring>(selected.Tag(), L"") : hstring{};
-            if (selectedTag != queuedTag)
+            if (selectedTag != lrp::ui::AppPageTagHString(*queuedPage))
             {
                 navView.SelectedItem(queuedItem);
                 return;
             }
 
-            auto currentItem = navItemForTagInner(incomingTag);
+            auto currentItem = strong->NavItemForPage(incomingPage);
             if (currentItem)
                 navView.SelectedItem(currentItem);
             navView.SelectedItem(queuedItem);
         });
 
-        m_queuedPageTag.clear();
+        m_queuedPage.reset();
         m_pageTransitionInProgress = true;
-        m_activePageTag = tag.c_str();
+        m_activePage = *page;
         m_pageTransitionStoryboard = storyboard;
         storyboard.Begin();
     }
 
     // =====================================================================
-    // Toggle handlers
+    // Shell runtime helpers
     // =====================================================================
 
     void MainWindow::ApplyGlobalEnableRuntimeState()
     {
+        m_trayController.SetPresenceEnabled(m_enabled);
+
         if (m_enabled)
         {
             if (m_mediaDetector)
@@ -3040,47 +3986,7 @@ namespace winrt::Last_Rich_Presence::implementation
             if (m_presence)
                 m_presence->ClearPresence();
             m_lastPresencePushPlaying = false;
-
-            // Reset media-facing UI while the master switch is off.
-            SongTitle().Text(L"Nothing playing");
-            ArtistName().Text(L"\x2014");
-            AlbumName().Text(L"");
-            PositionText().Text(L"0:00");
-            DurationText().Text(L"0:00");
-            SetSongProgress(0);
-            SetHomeMiniProgress(0);
-            SourceText().Text(L"No source");
-            PlayPauseIcon().Glyph(L"\xE768");
-            PlaybackStateText().Text(L"Idle");
-            HomeSourceValue().Text(L"No active source");
-            HomeSourceSubtext().Text(L"Waiting for active session");
-            HomeDetectedViaText().Text(L"Detected via --");
-            HomeMiniTitle().Text(L"Nothing playing");
-            HomeMiniArtist().Text(L"Start playback or activity");
-            HomeMiniTimer().Text(L"0:00 / 0:00");
-            HomeMiniPlayIcon().Glyph(L"\xE711");
-            HomeMiniStatusText().Text(L"Off");
-            auto mutedBrush = Application::Current().Resources()
-                .Lookup(box_value(L"TextFillColorSecondaryBrush"))
-                .as<Brush>();
-            HomeMiniPlayIcon().Foreground(mutedBrush);
-            HomeMiniStatusText().Foreground(mutedBrush);
-            TransitionElementVisibility(HomePausedChip(), false, 4.0);
-
-            MusicEmptyState().Visibility(Visibility::Visible);
-            NowPlayingCard().Visibility(Visibility::Collapsed);
-            TransitionElementVisibility(SourceBadge(), false, 6.0);
-            SourceDebugText().Visibility(Visibility::Collapsed);
-            SourceDebugText().Text(L"");
-            HomeMiniPlayer().Visibility(Visibility::Visible);
-
-            AlbumThumbnail().Source(nullptr);
-            HomeMiniThumbnail().Source(nullptr);
-            HomeHealthText().Text(L"Discord: OFF | Bridge: OFF | Hint age: --");
-            SetLivePulseActive(false);
-            SetHomeMiniWaveActive(false);
-            SetSongWaveActive(false);
-            HideTrackTransitionSkeleton();
+            UpdateUI({});
         }
 
         UpdateProductivePreview(m_lastProductiveActivity);
@@ -3089,274 +3995,14 @@ namespace winrt::Last_Rich_Presence::implementation
         UpdateConnectionStatus();
     }
 
-    void MainWindow::OnEnableToggled(IInspectable const&, RoutedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-
-        m_enabled = EnableToggle().IsOn();
-        ApplyProductiveRuntimeState();
-        ApplyCreativeDetectorRuntimeState();
-        ApplyGlobalEnableRuntimeState();
-        SaveSettings();
-    }
-
-    void MainWindow::OnTimestampToggled(IInspectable const&, RoutedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-        m_presence->SetShowTimestamps(TimestampToggle().IsOn());
-        SaveSettings();
-        RefreshMediaPresenceOutput();
-    }
-
-    void MainWindow::OnSourceToggled(IInspectable const&, RoutedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-        m_presence->SetShowSource(SourceToggle().IsOn());
-        SaveSettings();
-
-        UpdateSourceBadge(m_lastMedia);
-
-        RefreshMediaPresenceOutput();
-    }
-
-    void MainWindow::OnSourceDebugToggled(IInspectable const&, RoutedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-        m_sourceDebugMode = SourceDebugToggle().IsOn();
-        SaveSettings();
-        UpdateSourceBadge(m_lastMedia);
-    }
-
-    void MainWindow::OnPausedToggled(IInspectable const&, RoutedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-        m_presence->SetShowPaused(PausedToggle().IsOn());
-        SaveSettings();
-        RefreshMediaPresenceOutput();
-    }
-
-    void MainWindow::OnAlbumArtToggled(IInspectable const&, RoutedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-        m_presence->SetShowAlbumArt(AlbumArtToggle().IsOn());
-        SaveSettings();
-        RefreshMediaPresenceOutput();
-    }
-
-    void MainWindow::OnDefaultIdleStatusToggled(IInspectable const&, RoutedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-        m_showDefaultIdleStatus = DefaultIdleStatusToggle().IsOn();
-        m_presence->SetShowIdleStatus(m_showDefaultIdleStatus);
-        WriteUserPreferenceBool(lrp::startup::kShowDefaultIdleStatusRegistryValueName, m_showDefaultIdleStatus);
-        SaveSettings();
-        RefreshMediaPresenceOutput();
-    }
-
-    void MainWindow::OnCloseToTrayToggled(IInspectable const&, RoutedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-        m_closeToTrayOnClose = CloseToTrayToggle().IsOn();
-        SaveSettings();
-    }
-
-    void MainWindow::OnLaunchOnStartupToggled(IInspectable const&, RoutedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-        m_launchOnStartup = LaunchOnStartupToggle().IsOn();
-        ApplyLaunchOnStartupState(m_launchOnStartup, true);
-    }
-
-    void MainWindow::OnStartMinimizedToggled(IInspectable const&, RoutedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-        m_startMinimizedToTray = StartMinimizedToggle().IsOn();
-        SaveSettings();
-
-        // Keep startup command-line switches in sync when launch-on-startup is enabled.
-        if (m_launchOnStartup)
-            ApplyLaunchOnStartupState(true, false);
-    }
-
-    void MainWindow::OnTrayLeftClickToggleToggled(IInspectable const&, RoutedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-        m_trayLeftClickToggles = TrayLeftClickToggle().IsOn();
-        SaveSettings();
-    }
-
-    void MainWindow::OnSensitiveKeywordFilterToggled(IInspectable const&, RoutedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-        m_sensitiveKeywordFilter = SensitiveFilterToggle().IsOn();
-        m_presence->SetSensitiveKeywordFilter(m_sensitiveKeywordFilter);
-        SaveSettings();
-        RefreshMediaPresenceOutput();
-    }
-
-    void MainWindow::OnStrictBrowserPrivacyToggled(IInspectable const&, RoutedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-        m_strictBrowserPrivacy = StrictBrowserPrivacyToggle().IsOn();
-        m_presence->SetStrictBrowserPrivacy(m_strictBrowserPrivacy);
-        SaveSettings();
-        RefreshMediaPresenceOutput();
-    }
-
-    void MainWindow::OnSuppressBrowserArtToggled(IInspectable const&, RoutedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-        m_suppressBrowserAlbumArt = SuppressBrowserArtToggle().IsOn();
-        m_presence->SetSuppressBrowserAlbumArt(m_suppressBrowserAlbumArt);
-        SaveSettings();
-        RefreshMediaPresenceOutput();
-    }
-
-    void MainWindow::OnThemeSelectionChanged(IInspectable const&, SelectionChangedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-        m_themeMode = ThemeModeFromComboIndex(ThemeModeCombo().SelectedIndex());
-        ApplyThemeMode();
-        SaveSettings();
-        AppendDiagnosticLog(L"INFO", L"settings", L"Theme updated: " + ThemeModeLabel(m_themeMode));
-    }
-
-    void MainWindow::SyncActivityTypeOverridesFromControls()
-    {
-        m_mediaActivityTypeOverride = ActivityTypeOverrideFromComboIndex(MediaActivityTypeCombo().SelectedIndex());
-        m_creativeActivityTypeOverride = ActivityTypeOverrideFromComboIndex(CreativeActivityTypeCombo().SelectedIndex());
-        m_productiveActivityTypeOverride = ActivityTypeOverrideFromComboIndex(ProductiveActivityTypeCombo().SelectedIndex());
-    }
-
     void MainWindow::ApplyActivityTypeOverrides()
     {
         if (m_presence)
             m_presence->SetActivityTypeOverride(m_mediaActivityTypeOverride);
     }
 
-    void MainWindow::OnActivityTypeSelectionChanged(IInspectable const&, SelectionChangedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-
-        SyncActivityTypeOverridesFromControls();
-        ApplyActivityTypeOverrides();
-
-        if (m_presence)
-            RefreshMediaPresenceOutput();
-
-        SyncProductiveRpcOutput();
-        SyncCreativeRpcOutput();
-        SaveSettings();
-
-        AppendDiagnosticLog(L"INFO", L"settings",
-            L"Activity types updated: media=" + ActivityTypeOverrideLabel(m_mediaActivityTypeOverride) +
-            L", productive=" + ActivityTypeOverrideLabel(m_productiveActivityTypeOverride) +
-            L", creativity=" + ActivityTypeOverrideLabel(m_creativeActivityTypeOverride));
-    }
-
-    void MainWindow::OnProductiveToggleChanged(IInspectable const&, RoutedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-
-        SyncProductiveSettingsFromControls();
-        ApplyProductiveRuntimeState();
-        SaveSettings();
-        UpdateProductivePreview(m_lastProductiveActivity);
-        AppendDiagnosticLog(L"INFO", L"productive",
-            m_productiveEnabled ? L"Productive RPC enabled" : L"Productive RPC disabled");
-    }
-
-    void MainWindow::OnProductiveMetadataToggled(IInspectable const&, RoutedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-
-        SyncProductiveSettingsFromControls();
-        SaveSettings();
-        UpdateProductivePreview(m_lastProductiveActivity);
-        SyncProductiveRpcOutput();
-        AppendDiagnosticLog(L"INFO", L"productive",
-            m_productiveShowProjectName
-                ? L"Productivity project/file name display enabled"
-                : L"Productivity project/file name display disabled");
-    }
-
-    void MainWindow::OnProductiveSelectionChanged(IInspectable const&, SelectionChangedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-
-        SyncProductiveSettingsFromControls();
-        ApplyProductiveRuntimeState();
-        SaveSettings();
-        UpdateProductivePreview(m_lastProductiveActivity);
-
-        AppendDiagnosticLog(L"INFO", L"productive",
-            L"Productivity detection mode updated: " + ProductiveDetectionModeLabel(m_productiveDetectionMode));
-    }
-
-    void MainWindow::OnProductiveAppFilterToggled(IInspectable const&, RoutedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-
-        SyncProductiveSettingsFromControls();
-        SaveSettings();
-        UpdateProductivePreview(m_lastProductiveActivity);
-        SyncProductiveRpcOutput();
-
-        AppendDiagnosticLog(L"INFO", L"productive", L"Updated Productivity per-app filters");
-    }
-
-    void MainWindow::OnProductiveSelectAllAppsClicked(IInspectable const&, RoutedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-
-        bool initBefore = m_isInitializing;
-        m_isInitializing = true;
-        SetAllProductiveAppFilterChecks(true);
-        m_isInitializing = initBefore;
-
-        SyncProductiveSettingsFromControls();
-        SaveSettings();
-        UpdateProductivePreview(m_lastProductiveActivity);
-        SyncProductiveRpcOutput();
-        AppendDiagnosticLog(L"INFO", L"productive", L"Enabled all Productivity app filters");
-    }
-
-    void MainWindow::OnProductiveDeselectAllAppsClicked(IInspectable const&, RoutedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-
-        bool initBefore = m_isInitializing;
-        m_isInitializing = true;
-        SetAllProductiveAppFilterChecks(false);
-        m_isInitializing = initBefore;
-
-        SyncProductiveSettingsFromControls();
-        SaveSettings();
-        UpdateProductivePreview(m_lastProductiveActivity);
-        SyncProductiveRpcOutput();
-        AppendDiagnosticLog(L"INFO", L"productive", L"Disabled all Productivity app filters");
-    }
-
-    void MainWindow::OnApplyBlockedAppSitesClicked(IInspectable const&, RoutedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-
-        m_blockedAppSiteTermsRaw = BlockedAppSitesBox().Text().c_str();
-        auto terms = ParseBlockedTerms(m_blockedAppSiteTermsRaw);
-        m_presence->SetBlockedAppSiteTerms(std::move(terms));
-        SaveSettings();
-        RefreshMediaPresenceOutput();
-        AppendDiagnosticLog(L"INFO", L"settings", L"Updated blocked apps/sites list");
-    }
-
     void MainWindow::ApplyProductiveRuntimeState()
     {
-        if (ProductiveSettingsControlsPanel())
-        {
-            ProductiveSettingsControlsPanel().IsHitTestVisible(m_productiveEnabled);
-            ProductiveSettingsControlsPanel().Opacity(m_productiveEnabled ? 1.0 : 0.55);
-        }
-
         if (m_productiveDetector)
             m_productiveDetector->SetDetectionMode(m_productiveDetectionMode);
 
@@ -3454,38 +4100,18 @@ namespace winrt::Last_Rich_Presence::implementation
 
     void MainWindow::SyncProductiveSettingsFromControls()
     {
-        auto readCheck = [](Windows::Foundation::IReference<bool> const& value, bool fallback)
-        {
-            if (!value) return fallback;
-            try { return value.Value(); }
-            catch (...) { return fallback; }
-        };
-
-        m_productiveEnabled = ProductiveEnableToggle().IsOn();
-        m_productiveDetectionMode = ProductiveDetectionModeFromComboIndex(ProductiveDetectionModeCombo().SelectedIndex());
-        m_productiveShowProjectName = ProductiveShowProjectToggle().IsOn();
-        m_productiveWordEnabled = readCheck(ProductiveAppWordCheck().IsChecked(), false);
-        m_productiveExcelEnabled = readCheck(ProductiveAppExcelCheck().IsChecked(), false);
-        m_productivePowerPointEnabled = readCheck(ProductiveAppPowerPointCheck().IsChecked(), false);
-        m_productiveOneNoteEnabled = readCheck(ProductiveAppOneNoteCheck().IsChecked(), false);
-        m_productiveAccessEnabled = readCheck(ProductiveAppAccessCheck().IsChecked(), false);
-        m_productivePublisherEnabled = readCheck(ProductiveAppPublisherCheck().IsChecked(), false);
-        m_productiveVisioEnabled = readCheck(ProductiveAppVisioCheck().IsChecked(), false);
-        m_productiveProjectEnabled = readCheck(ProductiveAppProjectCheck().IsChecked(), false);
-        m_productiveCodexEnabled = readCheck(ProductiveAppCodexCheck().IsChecked(), false);
-    }
-
-    void MainWindow::SetAllProductiveAppFilterChecks(bool enabled)
-    {
-        ProductiveAppWordCheck().IsChecked(enabled);
-        ProductiveAppExcelCheck().IsChecked(enabled);
-        ProductiveAppPowerPointCheck().IsChecked(enabled);
-        ProductiveAppOneNoteCheck().IsChecked(enabled);
-        ProductiveAppAccessCheck().IsChecked(enabled);
-        ProductiveAppPublisherCheck().IsChecked(enabled);
-        ProductiveAppVisioCheck().IsChecked(enabled);
-        ProductiveAppProjectCheck().IsChecked(enabled);
-        ProductiveAppCodexCheck().IsChecked(enabled);
+        m_productiveEnabled = m_settings.productive.enabled;
+        m_productiveDetectionMode = m_settings.productive.detectionMode;
+        m_productiveShowProjectName = m_settings.productive.showProjectName;
+        m_productiveWordEnabled = m_settings.productive.wordEnabled;
+        m_productiveExcelEnabled = m_settings.productive.excelEnabled;
+        m_productivePowerPointEnabled = m_settings.productive.powerPointEnabled;
+        m_productiveOneNoteEnabled = m_settings.productive.oneNoteEnabled;
+        m_productiveAccessEnabled = m_settings.productive.accessEnabled;
+        m_productivePublisherEnabled = m_settings.productive.publisherEnabled;
+        m_productiveVisioEnabled = m_settings.productive.visioEnabled;
+        m_productiveProjectEnabled = m_settings.productive.projectEnabled;
+        m_productiveCodexEnabled = m_settings.productive.codexEnabled;
     }
 
     bool MainWindow::IsProductiveAppEnabled(const ProductiveActivityInfo& info) const
@@ -3507,40 +4133,33 @@ namespace winrt::Last_Rich_Presence::implementation
 
     void MainWindow::SyncCreativeSettingsFromControls()
     {
-        auto readCheck = [](Windows::Foundation::IReference<bool> const& value, bool fallback)
-        {
-            if (!value) return fallback;
-            try { return value.Value(); }
-            catch (...) { return fallback; }
-        };
-
-        m_creativeEnabled = CreativeEnableToggle().IsOn();
-        m_creativePriority = CreativePriorityModeFromComboIndex(CreativePriorityCombo().SelectedIndex());
-        m_creativeDetectionMode = CreativeDetectionModeFromComboIndex(CreativeDetectionModeCombo().SelectedIndex());
-        m_creativeShowProjectName = CreativeShowProjectToggle().IsOn();
-        m_creativeShowWindowTitle = CreativeShowWindowTitleToggle().IsOn();
-        m_creativePhotoshopEnabled = readCheck(CreativeAppPhotoshopCheck().IsChecked(), false);
-        m_creativeIllustratorEnabled = readCheck(CreativeAppIllustratorCheck().IsChecked(), false);
-        m_creativePremiereEnabled = readCheck(CreativeAppPremiereCheck().IsChecked(), false);
-        m_creativeAfterEffectsEnabled = readCheck(CreativeAppAfterEffectsCheck().IsChecked(), false);
-        m_creativeInDesignEnabled = readCheck(CreativeAppInDesignCheck().IsChecked(), false);
-        m_creativeAuditionEnabled = readCheck(CreativeAppAuditionCheck().IsChecked(), false);
-        m_creativeMediaEncoderEnabled = readCheck(CreativeAppMediaEncoderCheck().IsChecked(), false);
-        m_creativeLightroomEnabled = readCheck(CreativeAppLightroomCheck().IsChecked(), false);
-        m_creativeLightroomClassicEnabled = readCheck(CreativeAppLightroomClassicCheck().IsChecked(), false);
-        m_creativeInCopyEnabled = readCheck(CreativeAppInCopyCheck().IsChecked(), false);
-        m_creativeDreamweaverEnabled = readCheck(CreativeAppDreamweaverCheck().IsChecked(), false);
-        m_creativeAnimateEnabled = readCheck(CreativeAppAnimateCheck().IsChecked(), false);
-        m_creativeXdEnabled = readCheck(CreativeAppXdCheck().IsChecked(), false);
-        m_creativeBridgeEnabled = readCheck(CreativeAppBridgeCheck().IsChecked(), false);
-        m_creativeCharacterAnimatorEnabled = readCheck(CreativeAppCharacterAnimatorCheck().IsChecked(), false);
-        m_creativeFrescoEnabled = readCheck(CreativeAppFrescoCheck().IsChecked(), false);
-        m_creativeDimensionEnabled = readCheck(CreativeAppDimensionCheck().IsChecked(), false);
-        m_creativeSubstanceEnabled = readCheck(CreativeAppSubstanceCheck().IsChecked(), false);
-        m_creativeAcrobatEnabled = readCheck(CreativeAppAcrobatCheck().IsChecked(), false);
-        m_creativeOtherAdobeEnabled = readCheck(CreativeAppOtherAdobeCheck().IsChecked(), false);
-        m_creativePrivacyMode = CreativePrivacyModeFromComboIndex(CreativePrivacyCombo().SelectedIndex());
-        m_creativeIdleBehavior = CreativeIdleBehaviorFromComboIndex(CreativeIdleBehaviorCombo().SelectedIndex());
+        m_creativeEnabled = m_settings.creative.enabled;
+        m_creativePriority = m_settings.creative.priority;
+        m_creativeDetectionMode = m_settings.creative.detectionMode;
+        m_creativeShowProjectName = m_settings.creative.showProjectName;
+        m_creativeShowWindowTitle = m_settings.creative.showWindowTitle;
+        m_creativePhotoshopEnabled = m_settings.creative.photoshopEnabled;
+        m_creativeIllustratorEnabled = m_settings.creative.illustratorEnabled;
+        m_creativePremiereEnabled = m_settings.creative.premiereEnabled;
+        m_creativeAfterEffectsEnabled = m_settings.creative.afterEffectsEnabled;
+        m_creativeInDesignEnabled = m_settings.creative.inDesignEnabled;
+        m_creativeAuditionEnabled = m_settings.creative.auditionEnabled;
+        m_creativeMediaEncoderEnabled = m_settings.creative.mediaEncoderEnabled;
+        m_creativeLightroomEnabled = m_settings.creative.lightroomEnabled;
+        m_creativeLightroomClassicEnabled = m_settings.creative.lightroomClassicEnabled;
+        m_creativeInCopyEnabled = m_settings.creative.inCopyEnabled;
+        m_creativeDreamweaverEnabled = m_settings.creative.dreamweaverEnabled;
+        m_creativeAnimateEnabled = m_settings.creative.animateEnabled;
+        m_creativeXdEnabled = m_settings.creative.xdEnabled;
+        m_creativeBridgeEnabled = m_settings.creative.bridgeEnabled;
+        m_creativeCharacterAnimatorEnabled = m_settings.creative.characterAnimatorEnabled;
+        m_creativeFrescoEnabled = m_settings.creative.frescoEnabled;
+        m_creativeDimensionEnabled = m_settings.creative.dimensionEnabled;
+        m_creativeSubstanceEnabled = m_settings.creative.substanceEnabled;
+        m_creativeAcrobatEnabled = m_settings.creative.acrobatEnabled;
+        m_creativeOtherAdobeEnabled = m_settings.creative.otherAdobeEnabled;
+        m_creativePrivacyMode = m_settings.creative.privacyMode;
+        m_creativeIdleBehavior = m_settings.creative.idleBehavior;
 
         if (m_lastCreativeAcceptedActivity.active && !IsCreativeAppEnabled(m_lastCreativeAcceptedActivity))
         {
@@ -3549,38 +4168,8 @@ namespace winrt::Last_Rich_Presence::implementation
         }
     }
 
-    void MainWindow::SetAllCreativeAppFilterChecks(bool enabled)
-    {
-        CreativeAppPhotoshopCheck().IsChecked(enabled);
-        CreativeAppIllustratorCheck().IsChecked(enabled);
-        CreativeAppPremiereCheck().IsChecked(enabled);
-        CreativeAppAfterEffectsCheck().IsChecked(enabled);
-        CreativeAppInDesignCheck().IsChecked(enabled);
-        CreativeAppAuditionCheck().IsChecked(enabled);
-        CreativeAppMediaEncoderCheck().IsChecked(enabled);
-        CreativeAppLightroomCheck().IsChecked(enabled);
-        CreativeAppLightroomClassicCheck().IsChecked(enabled);
-        CreativeAppInCopyCheck().IsChecked(enabled);
-        CreativeAppDreamweaverCheck().IsChecked(enabled);
-        CreativeAppAnimateCheck().IsChecked(enabled);
-        CreativeAppXdCheck().IsChecked(enabled);
-        CreativeAppBridgeCheck().IsChecked(enabled);
-        CreativeAppCharacterAnimatorCheck().IsChecked(enabled);
-        CreativeAppFrescoCheck().IsChecked(enabled);
-        CreativeAppDimensionCheck().IsChecked(enabled);
-        CreativeAppSubstanceCheck().IsChecked(enabled);
-        CreativeAppAcrobatCheck().IsChecked(enabled);
-        CreativeAppOtherAdobeCheck().IsChecked(enabled);
-    }
-
     void MainWindow::ApplyCreativeDetectorRuntimeState()
     {
-        if (CreativeSettingsControlsPanel())
-        {
-            CreativeSettingsControlsPanel().IsHitTestVisible(m_creativeEnabled);
-            CreativeSettingsControlsPanel().Opacity(m_creativeEnabled ? 1.0 : 0.55);
-        }
-
         if (m_creativeDetector)
             m_creativeDetector->SetDetectionMode(m_creativeDetectionMode);
 
@@ -3772,154 +4361,17 @@ namespace winrt::Last_Rich_Presence::implementation
         lrp::CommitActivityLaneTransition(m_creativeLaneState, transition);
     }
 
-    void MainWindow::OnCreativeToggleChanged(IInspectable const&, RoutedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-
-        SyncCreativeSettingsFromControls();
-        ApplyCreativeDetectorRuntimeState();
-        SaveSettings();
-        RefreshCreativePreviewFromCurrentState();
-
-        AppendDiagnosticLog(L"INFO", L"creative",
-            m_creativeEnabled ? L"Creativity settings updated (enabled)" : L"Creativity settings updated (disabled)");
-    }
-
-    void MainWindow::OnCreativeSelectionChanged(IInspectable const&, SelectionChangedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-
-        SyncCreativeSettingsFromControls();
-        ApplyCreativeDetectorRuntimeState();
-        SaveSettings();
-        RefreshCreativePreviewFromCurrentState();
-
-        AppendDiagnosticLog(L"INFO", L"creative",
-            L"Creativity mode updated: priority=" + CreativePriorityModeLabel(m_creativePriority) +
-            L", detection=" + CreativeDetectionModeLabel(m_creativeDetectionMode) +
-            L", privacy=" + CreativePrivacyModeLabel(m_creativePrivacyMode) +
-            L", idle=" + CreativeIdleBehaviorLabel(m_creativeIdleBehavior));
-    }
-
-    void MainWindow::OnCreativeAppFilterToggled(IInspectable const&, RoutedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-
-        SyncCreativeSettingsFromControls();
-        SaveSettings();
-        RefreshCreativePreviewFromCurrentState();
-
-        AppendDiagnosticLog(L"INFO", L"creative", L"Updated Creativity per-app filters");
-    }
-
-    void MainWindow::OnCreativeSelectAllAppsClicked(IInspectable const&, RoutedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-
-        bool initBefore = m_isInitializing;
-        m_isInitializing = true;
-        SetAllCreativeAppFilterChecks(true);
-        m_isInitializing = initBefore;
-
-        SyncCreativeSettingsFromControls();
-        SaveSettings();
-        RefreshCreativePreviewFromCurrentState();
-        AppendDiagnosticLog(L"INFO", L"creative", L"Enabled all Creativity app filters");
-    }
-
-    void MainWindow::OnCreativeDeselectAllAppsClicked(IInspectable const&, RoutedEventArgs const&)
-    {
-        if (m_isInitializing) return;
-
-        bool initBefore = m_isInitializing;
-        m_isInitializing = true;
-        SetAllCreativeAppFilterChecks(false);
-        m_isInitializing = initBefore;
-
-        SyncCreativeSettingsFromControls();
-        SaveSettings();
-        RefreshCreativePreviewFromCurrentState();
-        AppendDiagnosticLog(L"INFO", L"creative", L"Disabled all Creativity app filters");
-    }
-
     void MainWindow::OnResetSettingsClicked(IInspectable const&, RoutedEventArgs const&)
     {
         const lrp::settings::PersistedSettings defaults;
-        bool initBefore = m_isInitializing;
-        m_isInitializing = true;
+        BoolValueGuard initializingGuard(m_isInitializing, true);
+        ApplyPersistedSettingsSnapshot(defaults);
 
-        TimestampToggle().IsOn(defaults.media.showTimestamps);
-        SourceToggle().IsOn(defaults.media.showSource);
-        SourceDebugToggle().IsOn(defaults.media.sourceDebugMode);
-        PausedToggle().IsOn(defaults.media.showPaused);
-        AlbumArtToggle().IsOn(defaults.media.showAlbumArt);
-        DefaultIdleStatusToggle().IsOn(defaults.media.showDefaultIdleStatus);
-
-        EnableToggle().IsOn(defaults.behavior.richPresenceEnabled);
-        CloseToTrayToggle().IsOn(defaults.behavior.closeToTrayOnClose);
-        LaunchOnStartupToggle().IsOn(defaults.behavior.launchOnStartup);
-        StartMinimizedToggle().IsOn(defaults.behavior.startMinimizedToTray);
-        TrayLeftClickToggle().IsOn(defaults.behavior.trayLeftClickToggles);
-
-        SensitiveFilterToggle().IsOn(defaults.media.sensitiveKeywordFilter);
-        StrictBrowserPrivacyToggle().IsOn(defaults.media.strictBrowserPrivacy);
-        SuppressBrowserArtToggle().IsOn(defaults.media.suppressBrowserAlbumArt);
-        ThemeModeCombo().SelectedIndex(ThemeModeToComboIndex(defaults.behavior.themeMode));
-        BlockedAppSitesBox().Text(defaults.media.blockedAppSiteTermsRaw);
-        MediaActivityTypeCombo().SelectedIndex(ActivityTypeOverrideToComboIndex(defaults.media.activityTypeOverride));
-        CreativeActivityTypeCombo().SelectedIndex(ActivityTypeOverrideToComboIndex(defaults.creative.activityTypeOverride));
-        ProductiveActivityTypeCombo().SelectedIndex(ActivityTypeOverrideToComboIndex(defaults.productive.activityTypeOverride));
-
-        ProductiveEnableToggle().IsOn(defaults.productive.enabled);
-        ProductiveDetectionModeCombo().SelectedIndex(ProductiveDetectionModeToComboIndex(defaults.productive.detectionMode));
-        ProductiveShowProjectToggle().IsOn(defaults.productive.showProjectName);
-        SetAllProductiveAppFilterChecks(true);
-        CreativeEnableToggle().IsOn(defaults.creative.enabled);
-        CreativePriorityCombo().SelectedIndex(CreativePriorityModeToComboIndex(defaults.creative.priority));
-        CreativeDetectionModeCombo().SelectedIndex(CreativeDetectionModeToComboIndex(defaults.creative.detectionMode));
-        CreativeShowProjectToggle().IsOn(defaults.creative.showProjectName);
-        CreativeShowWindowTitleToggle().IsOn(defaults.creative.showWindowTitle);
-        SetAllCreativeAppFilterChecks(true);
-        CreativePrivacyCombo().SelectedIndex(CreativePrivacyModeToComboIndex(defaults.creative.privacyMode));
-        CreativeIdleBehaviorCombo().SelectedIndex(CreativeIdleBehaviorToComboIndex(defaults.creative.idleBehavior));
-
-        m_sourceDebugMode = defaults.media.sourceDebugMode;
-        m_enabled = defaults.behavior.richPresenceEnabled;
-        m_closeToTrayOnClose = defaults.behavior.closeToTrayOnClose;
-        m_launchOnStartup = defaults.behavior.launchOnStartup;
-        m_startMinimizedToTray = defaults.behavior.startMinimizedToTray;
-        m_trayLeftClickToggles = defaults.behavior.trayLeftClickToggles;
-        m_sensitiveKeywordFilter = defaults.media.sensitiveKeywordFilter;
-        m_strictBrowserPrivacy = defaults.media.strictBrowserPrivacy;
-        m_suppressBrowserAlbumArt = defaults.media.suppressBrowserAlbumArt;
-        m_showDefaultIdleStatus = defaults.media.showDefaultIdleStatus;
-        m_themeMode = defaults.behavior.themeMode;
-        m_blockedAppSiteTermsRaw = defaults.media.blockedAppSiteTermsRaw;
-        m_mediaActivityTypeOverride = defaults.media.activityTypeOverride;
-        m_creativeActivityTypeOverride = defaults.creative.activityTypeOverride;
-        m_productiveActivityTypeOverride = defaults.productive.activityTypeOverride;
-        m_productiveEnabled = defaults.productive.enabled;
-        SyncProductiveSettingsFromControls();
-        SyncCreativeSettingsFromControls();
-        ApplyActivityTypeOverrides();
-
-        m_presence->SetShowTimestamps(defaults.media.showTimestamps);
-        m_presence->SetShowSource(defaults.media.showSource);
-        m_presence->SetShowPaused(defaults.media.showPaused);
-        m_presence->SetShowAlbumArt(defaults.media.showAlbumArt);
-        m_presence->SetShowIdleStatus(defaults.media.showDefaultIdleStatus);
-        m_presence->SetSensitiveKeywordFilter(defaults.media.sensitiveKeywordFilter);
-        m_presence->SetStrictBrowserPrivacy(defaults.media.strictBrowserPrivacy);
-        m_presence->SetSuppressBrowserAlbumArt(defaults.media.suppressBrowserAlbumArt);
-        m_presence->SetBlockedAppSiteTerms({});
-
-        m_isInitializing = initBefore;
         ApplyThemeMode();
-        ApplyLaunchOnStartupState(defaults.behavior.launchOnStartup, false);
+        ApplyLaunchOnStartupState(defaults.behavior.launchOnStartup, false, true);
         ApplyProductiveRuntimeState();
         ApplyCreativeDetectorRuntimeState();
         SaveSettings();
-        UpdateSourceBadge(m_lastMedia);
         ApplyGlobalEnableRuntimeState();
         AppendDiagnosticLog(L"INFO", L"settings", L"Reset settings to defaults");
     }
@@ -3978,11 +4430,9 @@ namespace winrt::Last_Rich_Presence::implementation
             {
                 BoolValueGuard initializingGuard(m_isInitializing, true);
                 ApplyPersistedSettingsSnapshot(imported.settings);
-                SyncProductiveSettingsFromControls();
-                SyncCreativeSettingsFromControls();
             }
 
-            ApplyLaunchOnStartupState(m_launchOnStartup, false);
+            ApplyLaunchOnStartupState(m_launchOnStartup, false, true);
             ApplyProductiveRuntimeState();
             ApplyCreativeDetectorRuntimeState();
             UpdateProductivePreview(m_lastProductiveActivity);
@@ -4047,6 +4497,16 @@ namespace winrt::Last_Rich_Presence::implementation
         if (m_isShuttingDown) return;
         m_isShuttingDown = true;
         m_exitRequested = true;
+
+        if (!m_windowInitialized)
+        {
+            if (m_lifetimeToken)
+                m_lifetimeToken->store(false);
+
+            SetBrowserHintUpdateCallback({});
+            return;
+        }
+
         AppendDiagnosticLog(L"INFO", L"app", L"Shutting down");
 
         if (m_lifetimeToken)
@@ -4095,7 +4555,7 @@ namespace winrt::Last_Rich_Presence::implementation
             m_pageTransitionStoryboard = nullptr;
         }
         m_pageTransitionInProgress = false;
-        m_queuedPageTag.clear();
+        m_queuedPage.reset();
 
         if (m_songProgressStoryboard)
         {
@@ -4180,7 +4640,7 @@ namespace winrt::Last_Rich_Presence::implementation
 
         SetBrowserHintUpdateCallback({});
         StopBrowserHintServer();
-        AppendDiagnosticLog(L"INFO", L"bridge", L"Browser hint bridge stopped");
+        AppendDiagnosticLog(L"INFO", L"bridge", L"Browser native-host transport stopped");
     }
 
     void MainWindow::OnMediaChanged(const MediaInfo& info)
@@ -4409,756 +4869,48 @@ namespace winrt::Last_Rich_Presence::implementation
 
     void MainWindow::UpdateProductivePreview(const ProductiveActivityInfo& info)
     {
-        if (!ProductiveDetectedAppText() ||
-            !ProductiveDetectedProjectText() ||
-            !ProductiveDetectedWindowText() ||
-            !ProductiveDetectedProcessText() ||
-            !ProductiveRuntimeSummaryText())
-        {
-            UpdateProductiveAppIcon(info);
-            UpdateHomeProductivePreview();
-            return;
-        }
-
-        auto buildAppLabel = [](const ProductiveActivityInfo& activity)
-        {
-            std::wstring label = activity.appName.empty() ? std::wstring(L"Microsoft Office") : activity.appName;
-            if (!activity.appKey.empty())
-                label += L" (" + activity.appKey + L")";
-            return label;
-        };
-
-        auto buildProcessLabel = [](const ProductiveActivityInfo& activity)
-        {
-            std::wstring label = activity.processName.empty() ? std::wstring(L"None") : activity.processName;
-            if (activity.processId != 0)
-                label += L" (PID " + std::to_wstring(activity.processId) + L")";
-            return label;
-        };
-
-        bool rawActive = info.active;
-        bool rawAllowed = !rawActive || IsProductiveAppEnabled(info);
-        bool rawFiltered = rawActive && !rawAllowed;
-
-        if (!m_productiveEnabled)
-        {
-            ProductiveDetectedAppText().Text(L"Productive RPC disabled");
-            ProductiveDetectedProjectText().Text(L"Enable Productive RPC to publish Office activity.");
-            ProductiveDetectedWindowText().Text(L"None");
-            ProductiveDetectedProcessText().Text(L"None");
-            ProductiveRuntimeSummaryText().Text(L"Productive pipeline is disabled.");
-            UpdateProductiveAppIcon({});
-            UpdateHomeProductivePreview();
-            return;
-        }
-
-        if (rawFiltered)
-        {
-            ProductiveDetectedAppText().Text(buildAppLabel(info) + L" (filtered)");
-            ProductiveDetectedProjectText().Text(L"Enable this app in the per-app list to allow Productivity RPC.");
-            ProductiveDetectedWindowText().Text(info.windowTitle.empty() ? L"None" : info.windowTitle);
-            ProductiveDetectedProcessText().Text(buildProcessLabel(info));
-            ProductiveRuntimeSummaryText().Text(
-                L"Detected app is blocked by Productivity per-app filters. Detection mode: " +
-                ProductiveDetectionModeLabel(m_productiveDetectionMode) + L".");
-            UpdateProductiveAppIcon(info);
-            UpdateHomeProductivePreview();
-            return;
-        }
-
-        if (!info.active)
-        {
-            ProductiveDetectedAppText().Text(L"Awaiting Productive Activity");
-            ProductiveDetectedProjectText().Text(L"Launch a supported Office app to update your status.");
-            ProductiveDetectedWindowText().Text(L"None");
-            ProductiveDetectedProcessText().Text(L"None");
-            ProductiveRuntimeSummaryText().Text(
-                L"Waiting for supported apps (Word, Excel, PowerPoint, OneNote, Access, Publisher, Visio, Project). "
-                L"Detection mode: " + ProductiveDetectionModeLabel(m_productiveDetectionMode) + L".");
-            UpdateProductiveAppIcon({});
-            UpdateHomeProductivePreview();
-            return;
-        }
-
-        std::wstring appLabel = buildAppLabel(info);
-
-        std::wstring subtitle;
-        if (m_productiveShowProjectName && !info.projectHint.empty())
-            subtitle = L"Working on " + info.projectHint;
-        else
-            subtitle = L"Working in " + (info.appName.empty() ? std::wstring(L"Microsoft Office") : info.appName);
-
-        ProductiveDetectedAppText().Text(appLabel);
-        ProductiveDetectedProjectText().Text(subtitle);
-        ProductiveDetectedWindowText().Text(info.windowTitle.empty() ? L"None" : info.windowTitle);
-        ProductiveDetectedProcessText().Text(buildProcessLabel(info));
-        ProductiveRuntimeSummaryText().Text(
-            L"Productive detector active. Detection mode: " + ProductiveDetectionModeLabel(m_productiveDetectionMode) +
-            L". Outlook, Teams, and background Office helpers are excluded.");
-        UpdateProductiveAppIcon(info);
+        ProductivityPageControlImpl()->ApplyState(BuildProductivityPageState(info));
+        UpdateProductiveAppIcon(m_productiveEnabled && info.active && IsProductiveAppEnabled(info) ? info : ProductiveActivityInfo{});
         UpdateHomeProductivePreview();
     }
 
     void MainWindow::UpdateCreativePreview(const CreativeActivityInfo& info)
     {
-        if (!CreativeMvpHeadlineText() || !CreativeMvpSummaryText())
-            return;
-
-        if (CreativeSettingsControlsPanel())
-        {
-            CreativeSettingsControlsPanel().IsHitTestVisible(m_creativeEnabled);
-            CreativeSettingsControlsPanel().Opacity(m_creativeEnabled ? 1.0 : 0.55);
-        }
-
-        auto setPreviewRows = [&](const std::wstring& app, const std::wstring& project,
-                                  const std::wstring& window, const std::wstring& process)
-        {
-            CreativeDetectedAppText().Text(hstring(app));
-            CreativeDetectedProjectText().Text(hstring(project));
-            CreativeDetectedWindowText().Text(hstring(window));
-            CreativeDetectedProcessText().Text(hstring(process));
-        };
-
-        std::wstring policySummary =
-            L"Priority: " + CreativePriorityModeLabel(m_creativePriority) +
-            L" | Detection: " + CreativeDetectionModeLabel(m_creativeDetectionMode) +
-            L" | Privacy: " + CreativePrivacyModeLabel(m_creativePrivacyMode) +
-            L" | Idle: " + CreativeIdleBehaviorLabel(m_creativeIdleBehavior) + L". ";
-
-        if (!m_creativeEnabled)
-        {
-            CreativeMvpHeadlineText().Text(L"Creativity RPC (disabled)");
-            CreativeMvpSummaryText().Text(hstring(
-                policySummary +
-                L"Creativity detector/pipeline is disabled. Settings are preserved and can be re-enabled later."));
-            setPreviewRows(L"Disabled", L"Creativity detection is turned off.", L"--", L"--");
-            UpdateCreativeAppIcon({});
-            return;
-        }
-
-        auto buildAppLabel = [](const CreativeActivityInfo& activity)
-        {
-            std::wstring label = activity.appName.empty() ? std::wstring(L"Adobe creativity app") : activity.appName;
-            if (!activity.appKey.empty())
-                label += L" (" + activity.appKey + L")";
-            return label;
-        };
-
-        auto buildProcessLabel = [](const CreativeActivityInfo& activity)
-        {
-            std::wstring label = activity.processName.empty() ? std::wstring(L"--") : activity.processName;
-            if (activity.processId != 0)
-                label += L" (PID " + std::to_wstring(activity.processId) + L")";
-            return label;
-        };
-
-        auto now = std::chrono::steady_clock::now();
-        bool rawActive = info.active;
-        bool rawAllowed = !rawActive || IsCreativeAppEnabled(info);
-        bool rawFiltered = rawActive && !rawAllowed;
-
-        CreativeActivityInfo displayInfo{};
-        bool showDisplay = false;
-        bool showingHeld = false;
-        bool clearImmediatelyMode = false;
-
-        if (rawActive && rawAllowed)
-        {
-            displayInfo = info;
-            showDisplay = true;
-        }
-        else
-        {
-            clearImmediatelyMode = (m_creativeIdleBehavior == CreativeIdleBehavior::ClearImmediately);
-            if (m_creativeIdleBehavior == CreativeIdleBehavior::HoldLast5Seconds &&
-                m_lastCreativeAcceptedActivity.active &&
-                IsCreativeAppEnabled(m_lastCreativeAcceptedActivity) &&
-                m_lastCreativeActiveSeenAt.time_since_epoch().count() > 0)
-            {
-                auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - m_lastCreativeActiveSeenAt);
-                if (elapsed <= std::chrono::seconds(kCreativeIdleHoldSeconds))
-                {
-                    displayInfo = m_lastCreativeAcceptedActivity;
-                    showDisplay = true;
-                    showingHeld = true;
-                }
-            }
-        }
+        CreativePageControlImpl()->ApplyState(BuildCreativePageState(info));
 
         CreativeActivityInfo iconInfo{};
-        if (m_creativePrivacyMode != CreativePrivacyMode::Private)
+        bool showingHeld = false;
+        CreativeActivityInfo displayInfo{};
+        if (TryGetEffectiveCreativeActivityForRpc(displayInfo, showingHeld) &&
+            m_creativePrivacyMode != CreativePrivacyMode::Private)
         {
-            if (showDisplay)
-                iconInfo = displayInfo;
-            else if (rawFiltered && info.active)
-                iconInfo = info;
+            iconInfo = displayInfo;
         }
+        else if (info.active && IsCreativeAppEnabled(info) && m_creativePrivacyMode != CreativePrivacyMode::Private)
+        {
+            iconInfo = info;
+        }
+
         UpdateCreativeAppIcon(iconInfo);
-
-        if (!showDisplay)
-        {
-            std::wstring headline = L"Creativity RPC (MVP detector idle)";
-            std::wstring summary = policySummary;
-
-            if (rawFiltered)
-            {
-                headline = L"Creativity RPC (filtered by app settings)";
-                summary += L"An Adobe app is detected but blocked by your per-app Creativity filter list.";
-
-                if (m_creativePrivacyMode == CreativePrivacyMode::Private)
-                {
-                    setPreviewRows(L"Creativity activity hidden", L"(Filtered and hidden by privacy mode)", L"--", L"--");
-                }
-                else if (m_creativePrivacyMode == CreativePrivacyMode::AppOnly)
-                {
-                    setPreviewRows(buildAppLabel(info) + L" (filtered)", L"(Hidden by privacy mode)", L"(Hidden by privacy mode)", L"(Hidden by privacy mode)");
-                }
-                else
-                {
-                    setPreviewRows(buildAppLabel(info) + L" (filtered)",
-                                   L"Enable this app in the per-app list to allow Creativity RPC.",
-                                   m_creativeShowWindowTitle && !info.windowTitle.empty() ? info.windowTitle : std::wstring(L"(Hidden by setting)"),
-                    buildProcessLabel(info));
-                }
-            }
-            else if (clearImmediatelyMode)
-            {
-                headline = L"Creativity RPC (idle - clear mode)";
-                summary += L"No supported app detected. Creativity activity clears immediately.";
-                setPreviewRows(L"Awaiting Creative Activity", L"Creativity preview is idle.", L"None", L"None");
-            }
-            else
-            {
-                summary += L"Listening for supported apps. Detector remains isolated from the current media pipeline.";
-                setPreviewRows(L"Awaiting Creative Activity", L"Launch a supported app to update your status.", L"None", L"None");
-            }
-
-            CreativeMvpHeadlineText().Text(hstring(headline));
-            CreativeMvpSummaryText().Text(hstring(summary));
-            return;
-        }
-
-        std::wstring headline = showingHeld
-            ? std::wstring(L"Creativity RPC (holding last activity)")
-            : std::wstring(L"Creativity RPC (MVP detector active)");
-        std::wstring summary = policySummary;
-        if (showingHeld)
-        {
-            int secondsLeft = kCreativeIdleHoldSeconds;
-            if (m_lastCreativeActiveSeenAt.time_since_epoch().count() > 0)
-            {
-                auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - m_lastCreativeActiveSeenAt).count();
-                if (elapsed < 0) elapsed = 0;
-                secondsLeft = static_cast<int>(kCreativeIdleHoldSeconds - elapsed);
-                if (secondsLeft < 0) secondsLeft = 0;
-            }
-
-            summary += L"Holding the last allowed Creativity activity for " + std::to_wstring(secondsLeft) + L"s.";
-            if (rawFiltered)
-                summary += L" Current detected Adobe app is filtered.";
-            else if (!rawActive)
-                summary += L" No Adobe app is currently detected.";
-        }
-        else
-        {
-            summary += L"Adobe app detected natively. Creativity settings are active, but Discord publishing remains separate from the media pipeline for now.";
-        }
-
-        CreativeMvpHeadlineText().Text(hstring(headline));
-        CreativeMvpSummaryText().Text(hstring(summary));
-
-        if (m_creativePrivacyMode == CreativePrivacyMode::Private)
-        {
-            setPreviewRows(L"Creativity activity hidden", L"(Private mode)", L"(Private mode)", L"(Private mode)");
-            return;
-        }
-
-        std::wstring appLabel = buildAppLabel(displayInfo);
-        if (showingHeld)
-            appLabel += L" (held)";
-
-        if (m_creativePrivacyMode == CreativePrivacyMode::AppOnly)
-        {
-            setPreviewRows(appLabel, L"(Hidden by privacy mode)", L"(Hidden by privacy mode)", L"(Hidden by privacy mode)");
-            return;
-        }
-
-        std::wstring projectText;
-        if (!m_creativeShowProjectName)
-            projectText = L"(Hidden by setting)";
-        else if (displayInfo.projectHint.empty())
-            projectText = L"(No project title heuristic)";
-        else
-            projectText = displayInfo.projectHint;
-
-        std::wstring windowText;
-        if (!m_creativeShowWindowTitle)
-            windowText = L"(Hidden by debug setting)";
-        else if (displayInfo.windowTitle.empty())
-            windowText = L"--";
-        else
-            windowText = displayInfo.windowTitle;
-
-        setPreviewRows(appLabel, projectText, windowText, buildProcessLabel(displayInfo));
+        UpdateHomeCreativePreview();
     }
 
     void MainWindow::UpdateHomeProductivePreview()
     {
-        if (!HomeProductiveTitle() || !HomeProductiveSubtitle() ||
-            !HomeProductiveWindowText() || !HomeProductiveProcessText() ||
-            !HomeProductiveStatusText() || !HomeProductiveStatusIcon() ||
-            !HomeProductiveSourceValue() || !HomeProductiveSourceSubtext() || !HomeProductiveDetectedViaText() ||
-            !HomeProductiveDetectorIndicator() || !HomeProductiveDetectorText() || !HomeProductiveDetectorSubtext())
-        {
-            return;
-        }
-
-        auto setStatus = [this](const std::wstring& status, const std::wstring& glyph, bool accent)
-        {
-            auto brushKey = accent ? L"AccentTextFillColorPrimaryBrush" : L"TextFillColorSecondaryBrush";
-            auto brush = Application::Current().Resources().Lookup(box_value(brushKey)).as<Brush>();
-            HomeProductiveStatusText().Text(hstring(status));
-            HomeProductiveStatusIcon().Glyph(hstring(glyph));
-            HomeProductiveStatusText().Foreground(brush);
-            HomeProductiveStatusIcon().Foreground(brush);
-        };
-
-        auto setRows = [this](const std::wstring& title, const std::wstring& subtitle,
-                              const std::wstring& window, const std::wstring& process)
-        {
-            HomeProductiveTitle().Text(hstring(title));
-            HomeProductiveSubtitle().Text(hstring(subtitle));
-            HomeProductiveWindowText().Text(hstring(window));
-            HomeProductiveProcessText().Text(hstring(process));
-        };
-
-        auto setSourceRows = [this](const std::wstring& source, const std::wstring& subtext, const std::wstring& detectedVia)
-        {
-            HomeProductiveSourceValue().Text(hstring(source));
-            HomeProductiveSourceSubtext().Text(hstring(subtext));
-            HomeProductiveDetectedViaText().Text(hstring(detectedVia));
-        };
-
-        auto setDetectorState = [this](const std::wstring& title, const std::wstring& subtext, const wchar_t* brushKey)
-        {
-            auto brush = Application::Current().Resources().Lookup(box_value(brushKey)).as<Brush>();
-            HomeProductiveDetectorIndicator().Fill(brush);
-            HomeProductiveDetectorText().Text(hstring(title));
-            HomeProductiveDetectorSubtext().Text(hstring(subtext));
-        };
-
-        auto productiveDetectedViaLabel = [this]() -> std::wstring
-        {
-            switch (m_productiveDetectionMode)
-            {
-            case ProductiveDetectionMode::ForegroundOnly:
-                return L"Detected via foreground window";
-            case ProductiveDetectionMode::VisibleWindowOnly:
-                return L"Detected via visible Office window";
-            default:
-                return L"Detected via foreground + fallback";
-            }
-        };
-
-        auto buildAppLabel = [](const ProductiveActivityInfo& activity)
-        {
-            std::wstring label = activity.appName.empty() ? std::wstring(L"Microsoft Office") : activity.appName;
-            if (!activity.appKey.empty())
-                label += L" (" + activity.appKey + L")";
-            return label;
-        };
-
-        auto buildProcessLabel = [](const ProductiveActivityInfo& activity)
-        {
-            std::wstring label = activity.processName.empty() ? std::wstring(L"None") : activity.processName;
-            if (activity.processId != 0)
-                label += L" (PID " + std::to_wstring(activity.processId) + L")";
-            return label;
-        };
-
-        if (!m_enabled)
-        {
-            setStatus(L"Paused", L"\xE769", false);
-            setRows(L"Rich Presence is off",
-                    L"Enable Rich Presence to run the Productive detector.",
-                    L"None",
-                    L"None");
-            setSourceRows(L"Productivity pipeline paused",
-                          L"Rich Presence is disabled.",
-                          L"Detected via --");
-            setDetectorState(L"Productivity detector paused",
-                             L"Enable Rich Presence to resume.",
-                             L"StatusDisconnectedBrush");
-            UpdateProductiveAppIcon({});
-            return;
-        }
-
-        if (!m_productiveEnabled)
-        {
-            setStatus(L"Disabled", L"\xE711", false);
-            setRows(L"Productive RPC disabled",
-                    L"Turn on Productive RPC in the Productive section.",
-                    L"None",
-                    L"None");
-            setSourceRows(L"Productivity source disabled",
-                          L"Turn on Productive RPC in Productive settings.",
-                          L"Detected via --");
-            setDetectorState(L"Productivity detector off",
-                             L"Productive pipeline toggle is off.",
-                             L"StatusDisconnectedBrush");
-            UpdateProductiveAppIcon({});
-            return;
-        }
-
-        const auto& rawInfo = m_lastProductiveActivity;
-        bool rawActive = rawInfo.active;
-        bool rawAllowed = !rawActive || IsProductiveAppEnabled(rawInfo);
-        bool rawFiltered = rawActive && !rawAllowed;
-
-        if (rawFiltered)
-        {
-            auto filteredLabel = buildAppLabel(rawInfo);
-            setStatus(L"Filtered", L"\xE711", false);
-            setRows(filteredLabel + L" (filtered)",
-                    L"Enable this app in Productivity filters to allow activity.",
-                    rawInfo.windowTitle.empty() ? std::wstring(L"None") : rawInfo.windowTitle,
-                    buildProcessLabel(rawInfo));
-            setSourceRows(filteredLabel + L" (filtered)",
-                          L"Blocked by your Productivity per-app filters.",
-                          productiveDetectedViaLabel());
-            setDetectorState(L"Productivity detector filtering",
-                             L"App blocked by your Productivity app filter.",
-                             L"StatusConnectingBrush");
-            return;
-        }
-
-        if (!rawActive)
-        {
-            setStatus(L"Waiting", L"\xE160", false);
-            setRows(L"Awaiting Productive Activity",
-                    L"Launch a supported Office app to update your status.",
-                    L"None",
-                    L"None");
-            setSourceRows(L"No active productivity source",
-                          L"Waiting for supported apps...",
-                          productiveDetectedViaLabel());
-            setDetectorState(L"Productivity detector waiting",
-                             L"Waiting for supported apps...",
-                             L"StatusConnectingBrush");
-            return;
-        }
-
-        std::wstring appLabel = buildAppLabel(rawInfo);
-
-        std::wstring subtitle;
-        if (m_productiveShowProjectName && !rawInfo.projectHint.empty())
-            subtitle = L"Working on " + rawInfo.projectHint;
-        else
-            subtitle = L"Working in " + (rawInfo.appName.empty()
-                ? std::wstring(L"Microsoft Office")
-                : rawInfo.appName);
-
-        setStatus(L"Active", L"\xE768", true);
-        setRows(appLabel,
-                subtitle,
-                rawInfo.windowTitle.empty() ? std::wstring(L"None") : rawInfo.windowTitle,
-                buildProcessLabel(rawInfo));
-        setSourceRows(appLabel,
-                      L"Publishing current Office app.",
-                      productiveDetectedViaLabel());
-        setDetectorState(L"Productivity detector active",
-                         L"Mode: " + ProductiveDetectionModeLabel(m_productiveDetectionMode),
-                         L"StatusConnectedBrush");
+        HomePageControlImpl()->ApplyState(BuildHomePageState());
     }
 
     void MainWindow::UpdateHomeCreativePreview()
     {
-        if (!HomeCreativeTitle() || !HomeCreativeSubtitle() || !HomeCreativeWindowText() || !HomeCreativeProcessText() ||
-            !HomeCreativeSourceValue() || !HomeCreativeSourceSubtext() || !HomeCreativeDetectedViaText() ||
-            !HomeCreativeDetectorIndicator() || !HomeCreativeDetectorText() || !HomeCreativeDetectorSubtext())
-            return;
-
-        auto setStatus = [this](const std::wstring& status, const std::wstring& glyph, bool accent)
-        {
-            auto brushKey = accent ? L"AccentTextFillColorPrimaryBrush" : L"TextFillColorSecondaryBrush";
-            auto brush = Application::Current().Resources().Lookup(box_value(brushKey)).as<Brush>();
-            HomeCreativeStatusText().Text(hstring(status));
-            HomeCreativeStatusIcon().Glyph(hstring(glyph));
-            HomeCreativeStatusText().Foreground(brush);
-            HomeCreativeStatusIcon().Foreground(brush);
-        };
-
-        auto setRows = [this](const std::wstring& title, const std::wstring& subtitle,
-                              const std::wstring& window, const std::wstring& process)
-        {
-            HomeCreativeTitle().Text(hstring(title));
-            HomeCreativeSubtitle().Text(hstring(subtitle));
-            HomeCreativeWindowText().Text(hstring(window));
-            HomeCreativeProcessText().Text(hstring(process));
-        };
-
-        auto setSourceRows = [this](const std::wstring& source, const std::wstring& subtext, const std::wstring& detectedVia)
-        {
-            HomeCreativeSourceValue().Text(hstring(source));
-            HomeCreativeSourceSubtext().Text(hstring(subtext));
-            HomeCreativeDetectedViaText().Text(hstring(detectedVia));
-        };
-
-        auto setDetectorState = [this](const std::wstring& title, const std::wstring& subtext, const wchar_t* brushKey)
-        {
-            auto brush = Application::Current().Resources().Lookup(box_value(brushKey)).as<Brush>();
-            HomeCreativeDetectorIndicator().Fill(brush);
-            HomeCreativeDetectorText().Text(hstring(title));
-            HomeCreativeDetectorSubtext().Text(hstring(subtext));
-        };
-
-        auto creativeDetectedViaLabel = [this]() -> std::wstring
-        {
-            switch (m_creativeDetectionMode)
-            {
-            case CreativeDetectionMode::ForegroundOnly:
-                return L"Detected via foreground window";
-            case CreativeDetectionMode::VisibleWindowOnly:
-                return L"Detected via visible Adobe window";
-            default:
-                return L"Detected via foreground + fallback";
-            }
-        };
-
-        if (!m_enabled)
-        {
-            setStatus(L"Paused", L"\xE769", false);
-            setRows(L"Rich Presence is off",
-                    L"Enable Rich Presence to run the Creativity detector.",
-                    L"--",
-                    L"--");
-            setSourceRows(L"Creativity pipeline paused",
-                          L"Rich Presence is disabled.",
-                          L"Detected via --");
-            setDetectorState(L"Creativity detector paused",
-                             L"Enable Rich Presence to resume.",
-                             L"StatusDisconnectedBrush");
-            UpdateCreativeAppIcon({});
-            return;
-        }
-
-        if (!m_creativeEnabled)
-        {
-            setStatus(L"Disabled", L"\xE711", false);
-            setRows(L"Creativity RPC disabled",
-                    L"Turn on Creativity RPC in the Creativity section.",
-                    L"--",
-                    L"--");
-            setSourceRows(L"Creativity source disabled",
-                          L"Turn on Creativity RPC in Creativity settings.",
-                          L"Detected via --");
-            setDetectorState(L"Creativity detector off",
-                             L"Creativity pipeline toggle is off.",
-                             L"StatusDisconnectedBrush");
-            UpdateCreativeAppIcon({});
-            return;
-        }
-
-        auto buildAppLabel = [](const CreativeActivityInfo& activity)
-        {
-            std::wstring label = activity.appName.empty() ? std::wstring(L"Adobe creativity app") : activity.appName;
-            if (!activity.appKey.empty())
-                label += L" (" + activity.appKey + L")";
-            return label;
-        };
-
-        auto buildProcessLabel = [](const CreativeActivityInfo& activity)
-        {
-            std::wstring label = activity.processName.empty() ? std::wstring(L"--") : activity.processName;
-            if (activity.processId != 0)
-                label += L" (PID " + std::to_wstring(activity.processId) + L")";
-            return label;
-        };
-
-        const auto& rawInfo = m_lastCreativeActivity;
-        bool rawActive = rawInfo.active;
-        bool rawAllowed = !rawActive || IsCreativeAppEnabled(rawInfo);
-        bool rawFiltered = rawActive && !rawAllowed;
-        bool clearImmediatelyMode = (m_creativeIdleBehavior == CreativeIdleBehavior::ClearImmediately);
-
-        CreativeActivityInfo displayInfo{};
-        bool showingHeld = false;
-        bool showDisplay = TryGetEffectiveCreativeActivityForRpc(displayInfo, showingHeld);
-
-        CreativeActivityInfo iconInfo{};
-        if (m_creativePrivacyMode != CreativePrivacyMode::Private)
-        {
-            if (showDisplay)
-                iconInfo = displayInfo;
-            else if (rawFiltered && rawInfo.active)
-                iconInfo = rawInfo;
-        }
-        UpdateCreativeAppIcon(iconInfo);
-
-        if (!showDisplay)
-        {
-            if (rawFiltered)
-            {
-                setStatus(L"Filtered", L"\xE711", false);
-                if (m_creativePrivacyMode == CreativePrivacyMode::Private)
-                {
-                    setRows(L"Creativity activity hidden",
-                            L"(Filtered and hidden by privacy mode)",
-                            L"--",
-                            L"--");
-                    setSourceRows(L"Filtered creativity app",
-                                  L"Hidden by privacy mode.",
-                                  creativeDetectedViaLabel());
-                }
-                else if (m_creativePrivacyMode == CreativePrivacyMode::AppOnly)
-                {
-                    setRows(buildAppLabel(rawInfo) + L" (filtered)",
-                            L"Filtered by your per-app Creativity settings.",
-                            L"(Hidden by privacy mode)",
-                            L"(Hidden by privacy mode)");
-                    setSourceRows(buildAppLabel(rawInfo) + L" (filtered)",
-                                  L"Blocked by your per-app Creativity filters.",
-                                  creativeDetectedViaLabel());
-                }
-                else
-                {
-                    std::wstring windowText =
-                        (m_creativeShowWindowTitle && !rawInfo.windowTitle.empty())
-                            ? rawInfo.windowTitle
-                            : std::wstring(L"(Hidden by setting)");
-
-                    setRows(buildAppLabel(rawInfo) + L" (filtered)",
-                            L"Enable this app in Creativity filters to allow activity.",
-                            windowText,
-                            buildProcessLabel(rawInfo));
-                    setSourceRows(buildAppLabel(rawInfo) + L" (filtered)",
-                                  L"Enable this app in Creativity filters.",
-                                  creativeDetectedViaLabel());
-                }
-                setDetectorState(L"Creativity detector filtering",
-                                 L"App blocked by your Creativity app filter.",
-                                 L"StatusConnectingBrush");
-                return;
-            }
-
-            if (clearImmediatelyMode)
-            {
-                setStatus(L"Idle", L"\xE160", false);
-                setRows(L"Awaiting Creative Activity",
-                        L"No supported app detected (clear mode).",
-                        L"None",
-                        L"None");
-                setSourceRows(L"No active creativity source",
-                              L"Clear mode: idle source is cleared immediately.",
-                              creativeDetectedViaLabel());
-                setDetectorState(L"Creativity detector idle",
-                                 L"Waiting for supported apps...",
-                                 L"StatusDisconnectedBrush");
-            }
-            else
-            {
-                setStatus(L"Waiting", L"\xE160", false);
-                setRows(L"Awaiting Creative Activity",
-                        L"Launch a supported app to update your status.",
-                        L"None",
-                        L"None");
-                setSourceRows(L"No active creativity source",
-                              L"Hold mode: waits before clearing recent app.",
-                              creativeDetectedViaLabel());
-                setDetectorState(L"Creativity detector waiting",
-                                 L"Waiting for supported apps...",
-                                 L"StatusConnectingBrush");
-            }
-            return;
-        }
-
-        if (m_creativePrivacyMode == CreativePrivacyMode::Private)
-        {
-            setStatus(L"Private", L"\xE72E", false);
-            setRows(L"Creativity activity hidden",
-                    L"Private mode is enabled.",
-                    L"(Private mode)",
-                    L"(Private mode)");
-            setSourceRows(L"Creativity source hidden",
-                          L"Private mode is enabled.",
-                          creativeDetectedViaLabel());
-            setDetectorState(L"Creativity detector active",
-                             L"Activity captured, details hidden.",
-                             L"StatusConnectedBrush");
-            return;
-        }
-
-        std::wstring appLabel = buildAppLabel(displayInfo);
-        if (showingHeld)
-            appLabel += L" (held)";
-
-        if (m_creativePrivacyMode == CreativePrivacyMode::AppOnly)
-        {
-            setStatus(showingHeld ? L"Held" : L"Active", showingHeld ? L"\xE823" : L"\xE768", true);
-            setRows(appLabel,
-                    L"(Details hidden by privacy mode)",
-                    L"(Hidden by privacy mode)",
-                    L"(Hidden by privacy mode)");
-            setSourceRows(appLabel,
-                          L"App-only privacy hides project and window details.",
-                          creativeDetectedViaLabel());
-            setDetectorState(showingHeld ? L"Creativity detector holding" : L"Creativity detector active",
-                             showingHeld
-                                 ? L"Using hold-last behavior while app is idle."
-                                 : L"Publishing current Adobe app.",
-                             showingHeld ? L"StatusConnectingBrush" : L"StatusConnectedBrush");
-            return;
-        }
-
-        std::wstring projectText;
-        if (!m_creativeShowProjectName)
-            projectText = L"(Hidden by setting)";
-        else if (displayInfo.projectHint.empty())
-            projectText = L"(No project title heuristic)";
-        else
-            projectText = displayInfo.projectHint;
-
-        std::wstring windowText;
-        if (!m_creativeShowWindowTitle)
-            windowText = L"(Hidden by debug setting)";
-        else if (displayInfo.windowTitle.empty())
-            windowText = L"--";
-        else
-            windowText = displayInfo.windowTitle;
-
-        setStatus(showingHeld ? L"Held" : L"Active", showingHeld ? L"\xE823" : L"\xE768", true);
-        setRows(appLabel, projectText, windowText, buildProcessLabel(displayInfo));
-        setSourceRows(appLabel,
-                      showingHeld ? L"Holding last detected Adobe app." : L"Publishing current Adobe app.",
-                      creativeDetectedViaLabel());
-        setDetectorState(showingHeld ? L"Creativity detector holding" : L"Creativity detector active",
-                         L"Mode: " + CreativeDetectionModeLabel(m_creativeDetectionMode) +
-                             L" | Idle: " + CreativeIdleBehaviorLabel(m_creativeIdleBehavior),
-                         showingHeld ? L"StatusConnectingBrush" : L"StatusConnectedBrush");
+        HomePageControlImpl()->ApplyState(BuildHomePageState());
     }
 
     void MainWindow::UpdateProductiveAppIcon(const ProductiveActivityInfo& info)
     {
-        bool hasProductiveIconControls = ProductiveDetectedAppIcon() && ProductiveDetectedAppIconFallback();
-        bool hasHomeIconControls = HomeProductiveAppIcon() && HomeProductiveAppIconFallback();
-        if (!hasProductiveIconControls && !hasHomeIconControls)
-            return;
-
-        auto showFallback = [this, hasProductiveIconControls, hasHomeIconControls]()
+        auto showFallback = [this]()
         {
-            if (hasProductiveIconControls)
-            {
-                ProductiveDetectedAppIcon().Source(nullptr);
-                ProductiveDetectedAppIcon().Visibility(Visibility::Collapsed);
-                ProductiveDetectedAppIconFallback().Visibility(Visibility::Visible);
-            }
-
-            if (hasHomeIconControls)
-            {
-                HomeProductiveAppIcon().Source(nullptr);
-                HomeProductiveAppIcon().Visibility(Visibility::Collapsed);
-                HomeProductiveAppIconFallback().Visibility(Visibility::Visible);
-            }
+            ProductivityPageControlImpl()->ClearDetectedAppIcon();
+            HomePageControlImpl()->ClearProductiveAppIcon();
         };
 
         if (!info.active)
@@ -5222,19 +4974,8 @@ namespace winrt::Last_Rich_Presence::implementation
                 if (strongThis->m_isShuttingDown || strongThis->m_productiveIconRequestId != requestIdValue)
                     return;
 
-                if (strongThis->ProductiveDetectedAppIcon() && strongThis->ProductiveDetectedAppIconFallback())
-                {
-                    strongThis->ProductiveDetectedAppIcon().Source(nullptr);
-                    strongThis->ProductiveDetectedAppIcon().Visibility(Visibility::Collapsed);
-                    strongThis->ProductiveDetectedAppIconFallback().Visibility(Visibility::Visible);
-                }
-
-                if (strongThis->HomeProductiveAppIcon() && strongThis->HomeProductiveAppIconFallback())
-                {
-                    strongThis->HomeProductiveAppIcon().Source(nullptr);
-                    strongThis->HomeProductiveAppIcon().Visibility(Visibility::Collapsed);
-                    strongThis->HomeProductiveAppIconFallback().Visibility(Visibility::Visible);
-                }
+                strongThis->ProductivityPageControlImpl()->ClearDetectedAppIcon();
+                strongThis->HomePageControlImpl()->ClearProductiveAppIcon();
             };
 
             auto isStale = [strongThis, requestIdValue]()
@@ -5327,19 +5068,8 @@ namespace winrt::Last_Rich_Presence::implementation
             if (strongThis->m_lastProductiveIconCacheKey != key)
                 co_return;
 
-            if (strongThis->ProductiveDetectedAppIcon() && strongThis->ProductiveDetectedAppIconFallback())
-            {
-                strongThis->ProductiveDetectedAppIcon().Source(resolvedImage);
-                strongThis->ProductiveDetectedAppIcon().Visibility(Visibility::Visible);
-                strongThis->ProductiveDetectedAppIconFallback().Visibility(Visibility::Collapsed);
-            }
-
-            if (strongThis->HomeProductiveAppIcon() && strongThis->HomeProductiveAppIconFallback())
-            {
-                strongThis->HomeProductiveAppIcon().Source(resolvedImage);
-                strongThis->HomeProductiveAppIcon().Visibility(Visibility::Visible);
-                strongThis->HomeProductiveAppIconFallback().Visibility(Visibility::Collapsed);
-            }
+            strongThis->ProductivityPageControlImpl()->SetDetectedAppIcon(resolvedImage);
+            strongThis->HomePageControlImpl()->SetProductiveAppIcon(resolvedImage);
         };
 
         m_productiveIconUpdateTask = updateTask(get_strong(), info, m_lastProductiveIconCacheKey, curatedPath, requestId);
@@ -5347,26 +5077,10 @@ namespace winrt::Last_Rich_Presence::implementation
 
     void MainWindow::UpdateCreativeAppIcon(const CreativeActivityInfo& info)
     {
-        bool hasCreativeIconControls = CreativeDetectedAppIcon() && CreativeDetectedAppIconFallback();
-        bool hasHomeIconControls = HomeCreativeAppIcon() && HomeCreativeAppIconFallback();
-        if (!hasCreativeIconControls && !hasHomeIconControls)
-            return;
-
-        auto showFallback = [this, hasCreativeIconControls, hasHomeIconControls]()
+        auto showFallback = [this]()
         {
-            if (hasCreativeIconControls)
-            {
-                CreativeDetectedAppIcon().Source(nullptr);
-                CreativeDetectedAppIcon().Visibility(Visibility::Collapsed);
-                CreativeDetectedAppIconFallback().Visibility(Visibility::Visible);
-            }
-
-            if (hasHomeIconControls)
-            {
-                HomeCreativeAppIcon().Source(nullptr);
-                HomeCreativeAppIcon().Visibility(Visibility::Collapsed);
-                HomeCreativeAppIconFallback().Visibility(Visibility::Visible);
-            }
+            CreativePageControlImpl()->ClearDetectedAppIcon();
+            HomePageControlImpl()->ClearCreativeAppIcon();
         };
 
         if (!info.active)
@@ -5430,19 +5144,8 @@ namespace winrt::Last_Rich_Presence::implementation
                 if (strongThis->m_isShuttingDown || strongThis->m_creativeIconRequestId != requestIdValue)
                     return;
 
-                if (strongThis->CreativeDetectedAppIcon() && strongThis->CreativeDetectedAppIconFallback())
-                {
-                    strongThis->CreativeDetectedAppIcon().Source(nullptr);
-                    strongThis->CreativeDetectedAppIcon().Visibility(Visibility::Collapsed);
-                    strongThis->CreativeDetectedAppIconFallback().Visibility(Visibility::Visible);
-                }
-
-                if (strongThis->HomeCreativeAppIcon() && strongThis->HomeCreativeAppIconFallback())
-                {
-                    strongThis->HomeCreativeAppIcon().Source(nullptr);
-                    strongThis->HomeCreativeAppIcon().Visibility(Visibility::Collapsed);
-                    strongThis->HomeCreativeAppIconFallback().Visibility(Visibility::Visible);
-                }
+                strongThis->CreativePageControlImpl()->ClearDetectedAppIcon();
+                strongThis->HomePageControlImpl()->ClearCreativeAppIcon();
             };
 
             auto isStale = [strongThis, requestIdValue]()
@@ -5535,19 +5238,8 @@ namespace winrt::Last_Rich_Presence::implementation
             if (strongThis->m_lastCreativeIconCacheKey != key)
                 co_return;
 
-            if (strongThis->CreativeDetectedAppIcon() && strongThis->CreativeDetectedAppIconFallback())
-            {
-                strongThis->CreativeDetectedAppIcon().Source(resolvedImage);
-                strongThis->CreativeDetectedAppIcon().Visibility(Visibility::Visible);
-                strongThis->CreativeDetectedAppIconFallback().Visibility(Visibility::Collapsed);
-            }
-
-            if (strongThis->HomeCreativeAppIcon() && strongThis->HomeCreativeAppIconFallback())
-            {
-                strongThis->HomeCreativeAppIcon().Source(resolvedImage);
-                strongThis->HomeCreativeAppIcon().Visibility(Visibility::Visible);
-                strongThis->HomeCreativeAppIconFallback().Visibility(Visibility::Collapsed);
-            }
+            strongThis->CreativePageControlImpl()->SetDetectedAppIcon(resolvedImage);
+            strongThis->HomePageControlImpl()->SetCreativeAppIcon(resolvedImage);
         };
 
         m_creativeIconUpdateTask = updateTask(get_strong(), info, m_lastCreativeIconCacheKey, curatedPath, requestId);
@@ -5567,86 +5259,8 @@ namespace winrt::Last_Rich_Presence::implementation
         auto sourceKey = NormalizeForMatch(info.sourceDisplayName + L" " + info.sourceName);
         bool animateTrack = hasMedia && !trackKey.empty() && trackKey != m_lastUiTrackKey;
         bool animateSource = hasMedia && !sourceKey.empty() && sourceKey != m_lastUiSourceKey;
-
-        if (!hasMedia)
-        {
-            MusicEmptyState().Visibility(Visibility::Visible);
-            NowPlayingCard().Visibility(Visibility::Collapsed);
-            TransitionElementVisibility(SourceBadge(), false, 6.0);
-            HomeMiniPlayer().Visibility(Visibility::Visible);
-
-            SongTitle().Text(L"Nothing playing");
-            ArtistName().Text(L"\x2014");
-            AlbumName().Text(L"");
-            PositionText().Text(L"0:00");
-            DurationText().Text(L"0:00");
-            SetSongProgress(0);
-            SetHomeMiniProgress(0);
-            PlayPauseIcon().Glyph(L"\xE768");
-            PlaybackStateText().Text(L"Idle");
-
-            HomeSourceValue().Text(L"No active source");
-            HomeSourceSubtext().Text(L"Waiting for active session");
-            HomeDetectedViaText().Text(L"Detected via --");
-            HomeMiniTitle().Text(L"Nothing playing");
-            HomeMiniArtist().Text(L"Start playback or activity");
-            HomeMiniTimer().Text(L"0:00 / 0:00");
-            SetHomeMiniProgress(0);
-            HomeMiniPlayIcon().Glyph(L"\xE160");
-            HomeMiniStatusText().Text(L"Waiting");
-            auto mutedBrush = Application::Current().Resources()
-                .Lookup(box_value(L"TextFillColorSecondaryBrush"))
-                .as<Brush>();
-            HomeMiniPlayIcon().Foreground(mutedBrush);
-            HomeMiniStatusText().Foreground(mutedBrush);
-            TransitionElementVisibility(HomePausedChip(), false, 4.0);
-            SetHomeMiniWaveActive(false);
-            SetSongWaveActive(false);
-            HideTrackTransitionSkeleton();
-
-            AlbumThumbnail().Source(nullptr);
-            HomeMiniThumbnail().Source(nullptr);
-            UpdateSourceBadge(info);
-            m_lastUiTrackKey.clear();
-            m_lastUiSourceKey.clear();
-            return;
-        }
-
-        // Show now playing
-        MusicEmptyState().Visibility(Visibility::Collapsed);
-        NowPlayingCard().Visibility(Visibility::Visible);
-        HomeMiniPlayer().Visibility(Visibility::Visible);
-
-        HomeMiniTitle().Text(info.title);
-        HomeMiniArtist().Text(info.artist.empty() ? L"\x2014" : info.artist);
-        HomeSourceValue().Text(info.sourceDisplayName.empty() ? L"Unknown source" : info.sourceDisplayName);
-        HomeSourceSubtext().Text(info.sourceName.empty() ? L"Detected via Windows Media Controls" : info.sourceName);
-        HomeDetectedViaText().Text(BuildDetectedViaLabel(info, m_lastMergeState));
-        TransitionElementVisibility(HomePausedChip(), !info.isPlaying, 4.0);
-        SetHomeMiniWaveActive(info.isPlaying);
-        SetSongWaveActive(info.isPlaying);
-
-        // Play/Pause icons
-        auto glyph = info.isPlaying ? L"\xE768" : L"\xE769";
-        PlayPauseIcon().Glyph(glyph);
-        PlaybackStateText().Text(info.isPlaying ? L"Playing" : L"Paused");
-        HomeMiniPlayIcon().Glyph(glyph);
-        HomeMiniStatusText().Text(info.isPlaying ? L"Live" : L"Paused");
-        auto statusBrush = Application::Current().Resources()
-            .Lookup(box_value(info.isPlaying
-                ? L"AccentTextFillColorPrimaryBrush"
-                : L"TextFillColorSecondaryBrush"))
-            .as<Brush>();
-        HomeMiniPlayIcon().Foreground(statusBrush);
-        HomeMiniStatusText().Foreground(statusBrush);
-
-        SongTitle().Text(info.title);
-        ArtistName().Text(info.artist.empty() ? L"\x2014" : info.artist);
-        AlbumName().Text(info.albumTitle);
-
-        auto posSec = static_cast<int>(info.position.count());
-        auto durSec = static_cast<int>(info.duration.count());
-
+        int posSec = static_cast<int>(info.position.count());
+        int durSec = static_cast<int>(info.duration.count());
         int hintPos = 0;
         int hintDur = 0;
         if (TryGetLiveHintTimeline(info, hintPos, hintDur))
@@ -5655,27 +5269,21 @@ namespace winrt::Last_Rich_Presence::implementation
             durSec = hintDur;
         }
 
-        PositionText().Text(FormatTime(posSec));
-        DurationText().Text(FormatTime(durSec));
+        auto musicState = BuildMusicPageState(info, posSec, durSec);
+        MusicPageControlImpl()->ApplyState(musicState);
+        HomePageControlImpl()->ApplyState(BuildHomePageState(posSec, durSec));
 
-        if (durSec > 0)
+        SetHomeMiniProgress(musicState.progressPercent);
+        SetHomeMiniWaveActive(hasMedia && info.isPlaying);
+
+        if (!hasMedia)
         {
-            double progress = (static_cast<double>(posSec) / durSec) * 100.0;
-            SetSongProgress(progress);
-            SetHomeMiniProgress(progress);
+            UpdateThumbnail(info);
+            HideTrackTransitionSkeleton();
+            m_lastUiTrackKey.clear();
+            m_lastUiSourceKey.clear();
+            return;
         }
-        else
-        {
-            SetSongProgress(0);
-            SetHomeMiniProgress(0);
-        }
-
-        auto displayPos = posSec;
-        if (displayPos < 0) displayPos = 0;
-        if (durSec > 0 && displayPos > durSec) displayPos = durSec;
-        HomeMiniTimer().Text(FormatTime(displayPos) + L" / " + FormatTime(durSec > 0 ? durSec : 0));
-
-        UpdateSourceBadge(info);
 
         UpdateThumbnail(info);
 
@@ -5685,12 +5293,12 @@ namespace winrt::Last_Rich_Presence::implementation
         auto motionEnabled = IsMotionEnabled();
 
         if (animateSource && motionEnabled)
-            AnimateOpacityPulse(HomeSourceCard());
+            HomePageControlImpl()->PulseSourceCard();
         if (animateTrack)
         {
             if (motionEnabled)
             {
-                AnimateOpacityPulse(HomeMiniPlayer());
+                HomePageControlImpl()->PulseMiniPlayer();
                 ShowTrackTransitionSkeleton();
             }
             else
@@ -5702,29 +5310,7 @@ namespace winrt::Last_Rich_Presence::implementation
 
     void MainWindow::UpdateSourceBadge(const MediaInfo& info)
     {
-        if (SourceToggle().IsOn() && !info.sourceDisplayName.empty())
-        {
-            SourceText().Text(info.sourceDisplayName);
-
-            if (m_sourceDebugMode)
-            {
-                SourceDebugText().Visibility(Visibility::Visible);
-                SourceDebugText().Text(FormatSourceDebugText(info));
-            }
-            else
-            {
-                SourceDebugText().Visibility(Visibility::Collapsed);
-                SourceDebugText().Text(L"");
-            }
-
-            TransitionElementVisibility(SourceBadge(), true, 6.0);
-            return;
-        }
-
-        TransitionElementVisibility(SourceBadge(), false, 6.0);
-        SourceText().Text(L"No source");
-        SourceDebugText().Visibility(Visibility::Collapsed);
-        SourceDebugText().Text(L"");
+        MusicPageControlImpl()->ApplyState(BuildMusicPageState(info));
     }
 
     std::wstring MainWindow::FormatSourceDebugText(const MediaInfo& info) const
@@ -5751,7 +5337,9 @@ namespace winrt::Last_Rich_Presence::implementation
     {
         try
         {
-            SettingsDiagnosticsPanelHost().SetLogText(m_diagnosticLog.JoinLines());
+            lrp::ui::SettingsPageState state{};
+            state.diagnosticsLogText = hstring(m_diagnosticLog.JoinLines());
+            SettingsPageControlImpl()->ApplyState(state);
         }
         catch (...) {}
     }
@@ -5840,71 +5428,73 @@ namespace winrt::Last_Rich_Presence::implementation
 
     std::wstring MainWindow::BuildSettingsSnapshotJson()
     {
+        auto settings = BuildPersistedSettingsSnapshot();
+
         JsonObject root;
         root.Insert(L"schemaVersion", JsonValue::CreateNumberValue(2));
         root.Insert(L"generatedAtUtc", JsonValue::CreateStringValue(BuildUtcTimestampString()));
 
-        root.Insert(L"ShowTimestamps", JsonValue::CreateBooleanValue(TimestampToggle().IsOn()));
-        root.Insert(L"ShowSourceApp", JsonValue::CreateBooleanValue(SourceToggle().IsOn()));
-        root.Insert(L"SourceDebugMode", JsonValue::CreateBooleanValue(SourceDebugToggle().IsOn()));
-        root.Insert(L"ShowPaused", JsonValue::CreateBooleanValue(PausedToggle().IsOn()));
-        root.Insert(L"ShowAlbumArt", JsonValue::CreateBooleanValue(AlbumArtToggle().IsOn()));
-        root.Insert(L"ShowDefaultIdleStatus", JsonValue::CreateBooleanValue(m_showDefaultIdleStatus));
+        root.Insert(L"ShowTimestamps", JsonValue::CreateBooleanValue(settings.media.showTimestamps));
+        root.Insert(L"ShowSourceApp", JsonValue::CreateBooleanValue(settings.media.showSource));
+        root.Insert(L"SourceDebugMode", JsonValue::CreateBooleanValue(settings.media.sourceDebugMode));
+        root.Insert(L"ShowPaused", JsonValue::CreateBooleanValue(settings.media.showPaused));
+        root.Insert(L"ShowAlbumArt", JsonValue::CreateBooleanValue(settings.media.showAlbumArt));
+        root.Insert(L"ShowDefaultIdleStatus", JsonValue::CreateBooleanValue(settings.media.showDefaultIdleStatus));
 
-        root.Insert(L"RichPresenceEnabled", JsonValue::CreateBooleanValue(m_enabled));
-        root.Insert(L"CloseToTrayOnClose", JsonValue::CreateBooleanValue(m_closeToTrayOnClose));
-        root.Insert(L"LaunchOnStartup", JsonValue::CreateBooleanValue(m_launchOnStartup));
-        root.Insert(L"StartMinimizedToTray", JsonValue::CreateBooleanValue(m_startMinimizedToTray));
-        root.Insert(L"TrayLeftClickToggles", JsonValue::CreateBooleanValue(m_trayLeftClickToggles));
+        root.Insert(L"RichPresenceEnabled", JsonValue::CreateBooleanValue(settings.behavior.richPresenceEnabled));
+        root.Insert(L"CloseToTrayOnClose", JsonValue::CreateBooleanValue(settings.behavior.closeToTrayOnClose));
+        root.Insert(L"LaunchOnStartup", JsonValue::CreateBooleanValue(settings.behavior.launchOnStartup));
+        root.Insert(L"StartMinimizedToTray", JsonValue::CreateBooleanValue(settings.behavior.startMinimizedToTray));
+        root.Insert(L"TrayLeftClickToggles", JsonValue::CreateBooleanValue(settings.behavior.trayLeftClickToggles));
 
-        root.Insert(L"SensitiveKeywordFilter", JsonValue::CreateBooleanValue(m_sensitiveKeywordFilter));
-        root.Insert(L"StrictBrowserPrivacy", JsonValue::CreateBooleanValue(m_strictBrowserPrivacy));
-        root.Insert(L"SuppressBrowserAlbumArt", JsonValue::CreateBooleanValue(m_suppressBrowserAlbumArt));
-        root.Insert(L"ThemeMode", JsonValue::CreateStringValue(ToSettingString(m_themeMode)));
-        root.Insert(L"BlockedAppSiteTerms", JsonValue::CreateStringValue(m_blockedAppSiteTermsRaw));
-        root.Insert(L"MediaActivityType", JsonValue::CreateStringValue(ToSettingStringActivityTypeOverride(m_mediaActivityTypeOverride)));
-        root.Insert(L"CreativeActivityType", JsonValue::CreateStringValue(ToSettingStringActivityTypeOverride(m_creativeActivityTypeOverride)));
-        root.Insert(L"ProductiveActivityType", JsonValue::CreateStringValue(ToSettingStringActivityTypeOverride(m_productiveActivityTypeOverride)));
+        root.Insert(L"SensitiveKeywordFilter", JsonValue::CreateBooleanValue(settings.media.sensitiveKeywordFilter));
+        root.Insert(L"StrictBrowserPrivacy", JsonValue::CreateBooleanValue(settings.media.strictBrowserPrivacy));
+        root.Insert(L"SuppressBrowserAlbumArt", JsonValue::CreateBooleanValue(settings.media.suppressBrowserAlbumArt));
+        root.Insert(L"ThemeMode", JsonValue::CreateStringValue(ToSettingString(settings.behavior.themeMode)));
+        root.Insert(L"BlockedAppSiteTerms", JsonValue::CreateStringValue(settings.media.blockedAppSiteTermsRaw));
+        root.Insert(L"MediaActivityType", JsonValue::CreateStringValue(ToSettingStringActivityTypeOverride(settings.media.activityTypeOverride)));
+        root.Insert(L"CreativeActivityType", JsonValue::CreateStringValue(ToSettingStringActivityTypeOverride(settings.creative.activityTypeOverride)));
+        root.Insert(L"ProductiveActivityType", JsonValue::CreateStringValue(ToSettingStringActivityTypeOverride(settings.productive.activityTypeOverride)));
 
-        root.Insert(L"ProductiveEnabled", JsonValue::CreateBooleanValue(m_productiveEnabled));
-        root.Insert(L"ProductiveDetectionMode", JsonValue::CreateStringValue(ToSettingString(m_productiveDetectionMode)));
-        root.Insert(L"ProductiveShowProjectName", JsonValue::CreateBooleanValue(m_productiveShowProjectName));
-        root.Insert(L"ProductiveAppWordEnabled", JsonValue::CreateBooleanValue(m_productiveWordEnabled));
-        root.Insert(L"ProductiveAppExcelEnabled", JsonValue::CreateBooleanValue(m_productiveExcelEnabled));
-        root.Insert(L"ProductiveAppPowerPointEnabled", JsonValue::CreateBooleanValue(m_productivePowerPointEnabled));
-        root.Insert(L"ProductiveAppOneNoteEnabled", JsonValue::CreateBooleanValue(m_productiveOneNoteEnabled));
-        root.Insert(L"ProductiveAppAccessEnabled", JsonValue::CreateBooleanValue(m_productiveAccessEnabled));
-        root.Insert(L"ProductiveAppPublisherEnabled", JsonValue::CreateBooleanValue(m_productivePublisherEnabled));
-        root.Insert(L"ProductiveAppVisioEnabled", JsonValue::CreateBooleanValue(m_productiveVisioEnabled));
-        root.Insert(L"ProductiveAppProjectEnabled", JsonValue::CreateBooleanValue(m_productiveProjectEnabled));
-        root.Insert(L"ProductiveAppCodexEnabled", JsonValue::CreateBooleanValue(m_productiveCodexEnabled));
-        root.Insert(L"CreativeEnabled", JsonValue::CreateBooleanValue(m_creativeEnabled));
-        root.Insert(L"CreativePriority", JsonValue::CreateStringValue(ToSettingString(m_creativePriority)));
-        root.Insert(L"CreativeDetectionMode", JsonValue::CreateStringValue(ToSettingString(m_creativeDetectionMode)));
-        root.Insert(L"CreativeShowProjectName", JsonValue::CreateBooleanValue(m_creativeShowProjectName));
-        root.Insert(L"CreativeShowWindowTitle", JsonValue::CreateBooleanValue(m_creativeShowWindowTitle));
-        root.Insert(L"CreativeAppPhotoshopEnabled", JsonValue::CreateBooleanValue(m_creativePhotoshopEnabled));
-        root.Insert(L"CreativeAppIllustratorEnabled", JsonValue::CreateBooleanValue(m_creativeIllustratorEnabled));
-        root.Insert(L"CreativeAppPremiereEnabled", JsonValue::CreateBooleanValue(m_creativePremiereEnabled));
-        root.Insert(L"CreativeAppAfterEffectsEnabled", JsonValue::CreateBooleanValue(m_creativeAfterEffectsEnabled));
-        root.Insert(L"CreativeAppInDesignEnabled", JsonValue::CreateBooleanValue(m_creativeInDesignEnabled));
-        root.Insert(L"CreativeAppAuditionEnabled", JsonValue::CreateBooleanValue(m_creativeAuditionEnabled));
-        root.Insert(L"CreativeAppMediaEncoderEnabled", JsonValue::CreateBooleanValue(m_creativeMediaEncoderEnabled));
-        root.Insert(L"CreativeAppLightroomEnabled", JsonValue::CreateBooleanValue(m_creativeLightroomEnabled));
-        root.Insert(L"CreativeAppLightroomClassicEnabled", JsonValue::CreateBooleanValue(m_creativeLightroomClassicEnabled));
-        root.Insert(L"CreativeAppInCopyEnabled", JsonValue::CreateBooleanValue(m_creativeInCopyEnabled));
-        root.Insert(L"CreativeAppDreamweaverEnabled", JsonValue::CreateBooleanValue(m_creativeDreamweaverEnabled));
-        root.Insert(L"CreativeAppAnimateEnabled", JsonValue::CreateBooleanValue(m_creativeAnimateEnabled));
-        root.Insert(L"CreativeAppXdEnabled", JsonValue::CreateBooleanValue(m_creativeXdEnabled));
-        root.Insert(L"CreativeAppBridgeEnabled", JsonValue::CreateBooleanValue(m_creativeBridgeEnabled));
-        root.Insert(L"CreativeAppCharacterAnimatorEnabled", JsonValue::CreateBooleanValue(m_creativeCharacterAnimatorEnabled));
-        root.Insert(L"CreativeAppFrescoEnabled", JsonValue::CreateBooleanValue(m_creativeFrescoEnabled));
-        root.Insert(L"CreativeAppDimensionEnabled", JsonValue::CreateBooleanValue(m_creativeDimensionEnabled));
-        root.Insert(L"CreativeAppSubstanceEnabled", JsonValue::CreateBooleanValue(m_creativeSubstanceEnabled));
-        root.Insert(L"CreativeAppAcrobatEnabled", JsonValue::CreateBooleanValue(m_creativeAcrobatEnabled));
-        root.Insert(L"CreativeAppOtherAdobeEnabled", JsonValue::CreateBooleanValue(m_creativeOtherAdobeEnabled));
-        root.Insert(L"CreativePrivacyMode", JsonValue::CreateStringValue(ToSettingString(m_creativePrivacyMode)));
-        root.Insert(L"CreativeIdleBehavior", JsonValue::CreateStringValue(ToSettingString(m_creativeIdleBehavior)));
+        root.Insert(L"ProductiveEnabled", JsonValue::CreateBooleanValue(settings.productive.enabled));
+        root.Insert(L"ProductiveDetectionMode", JsonValue::CreateStringValue(ToSettingString(settings.productive.detectionMode)));
+        root.Insert(L"ProductiveShowProjectName", JsonValue::CreateBooleanValue(settings.productive.showProjectName));
+        root.Insert(L"ProductiveAppWordEnabled", JsonValue::CreateBooleanValue(settings.productive.wordEnabled));
+        root.Insert(L"ProductiveAppExcelEnabled", JsonValue::CreateBooleanValue(settings.productive.excelEnabled));
+        root.Insert(L"ProductiveAppPowerPointEnabled", JsonValue::CreateBooleanValue(settings.productive.powerPointEnabled));
+        root.Insert(L"ProductiveAppOneNoteEnabled", JsonValue::CreateBooleanValue(settings.productive.oneNoteEnabled));
+        root.Insert(L"ProductiveAppAccessEnabled", JsonValue::CreateBooleanValue(settings.productive.accessEnabled));
+        root.Insert(L"ProductiveAppPublisherEnabled", JsonValue::CreateBooleanValue(settings.productive.publisherEnabled));
+        root.Insert(L"ProductiveAppVisioEnabled", JsonValue::CreateBooleanValue(settings.productive.visioEnabled));
+        root.Insert(L"ProductiveAppProjectEnabled", JsonValue::CreateBooleanValue(settings.productive.projectEnabled));
+        root.Insert(L"ProductiveAppCodexEnabled", JsonValue::CreateBooleanValue(settings.productive.codexEnabled));
+        root.Insert(L"CreativeEnabled", JsonValue::CreateBooleanValue(settings.creative.enabled));
+        root.Insert(L"CreativePriority", JsonValue::CreateStringValue(ToSettingString(settings.creative.priority)));
+        root.Insert(L"CreativeDetectionMode", JsonValue::CreateStringValue(ToSettingString(settings.creative.detectionMode)));
+        root.Insert(L"CreativeShowProjectName", JsonValue::CreateBooleanValue(settings.creative.showProjectName));
+        root.Insert(L"CreativeShowWindowTitle", JsonValue::CreateBooleanValue(settings.creative.showWindowTitle));
+        root.Insert(L"CreativeAppPhotoshopEnabled", JsonValue::CreateBooleanValue(settings.creative.photoshopEnabled));
+        root.Insert(L"CreativeAppIllustratorEnabled", JsonValue::CreateBooleanValue(settings.creative.illustratorEnabled));
+        root.Insert(L"CreativeAppPremiereEnabled", JsonValue::CreateBooleanValue(settings.creative.premiereEnabled));
+        root.Insert(L"CreativeAppAfterEffectsEnabled", JsonValue::CreateBooleanValue(settings.creative.afterEffectsEnabled));
+        root.Insert(L"CreativeAppInDesignEnabled", JsonValue::CreateBooleanValue(settings.creative.inDesignEnabled));
+        root.Insert(L"CreativeAppAuditionEnabled", JsonValue::CreateBooleanValue(settings.creative.auditionEnabled));
+        root.Insert(L"CreativeAppMediaEncoderEnabled", JsonValue::CreateBooleanValue(settings.creative.mediaEncoderEnabled));
+        root.Insert(L"CreativeAppLightroomEnabled", JsonValue::CreateBooleanValue(settings.creative.lightroomEnabled));
+        root.Insert(L"CreativeAppLightroomClassicEnabled", JsonValue::CreateBooleanValue(settings.creative.lightroomClassicEnabled));
+        root.Insert(L"CreativeAppInCopyEnabled", JsonValue::CreateBooleanValue(settings.creative.inCopyEnabled));
+        root.Insert(L"CreativeAppDreamweaverEnabled", JsonValue::CreateBooleanValue(settings.creative.dreamweaverEnabled));
+        root.Insert(L"CreativeAppAnimateEnabled", JsonValue::CreateBooleanValue(settings.creative.animateEnabled));
+        root.Insert(L"CreativeAppXdEnabled", JsonValue::CreateBooleanValue(settings.creative.xdEnabled));
+        root.Insert(L"CreativeAppBridgeEnabled", JsonValue::CreateBooleanValue(settings.creative.bridgeEnabled));
+        root.Insert(L"CreativeAppCharacterAnimatorEnabled", JsonValue::CreateBooleanValue(settings.creative.characterAnimatorEnabled));
+        root.Insert(L"CreativeAppFrescoEnabled", JsonValue::CreateBooleanValue(settings.creative.frescoEnabled));
+        root.Insert(L"CreativeAppDimensionEnabled", JsonValue::CreateBooleanValue(settings.creative.dimensionEnabled));
+        root.Insert(L"CreativeAppSubstanceEnabled", JsonValue::CreateBooleanValue(settings.creative.substanceEnabled));
+        root.Insert(L"CreativeAppAcrobatEnabled", JsonValue::CreateBooleanValue(settings.creative.acrobatEnabled));
+        root.Insert(L"CreativeAppOtherAdobeEnabled", JsonValue::CreateBooleanValue(settings.creative.otherAdobeEnabled));
+        root.Insert(L"CreativePrivacyMode", JsonValue::CreateStringValue(ToSettingString(settings.creative.privacyMode)));
+        root.Insert(L"CreativeIdleBehavior", JsonValue::CreateStringValue(ToSettingString(settings.creative.idleBehavior)));
 
         auto json = root.Stringify();
         return std::wstring(json.c_str());
@@ -5921,8 +5511,8 @@ namespace winrt::Last_Rich_Presence::implementation
 
         if (!info.thumbnail)
         {
-            AlbumThumbnail().Source(nullptr);
-            HomeMiniThumbnail().Source(nullptr);
+            MusicPageControlImpl()->ClearAlbumThumbnail();
+            HomePageControlImpl()->ClearMiniThumbnail();
             return;
         }
 
@@ -5958,8 +5548,8 @@ namespace winrt::Last_Rich_Presence::implementation
                 // Final check before updating UI
                 if (!strongThis->m_isShuttingDown)
                 {
-                    strongThis->AlbumThumbnail().Source(bitmapImage);
-                    strongThis->HomeMiniThumbnail().Source(bitmapImage);
+                    strongThis->MusicPageControlImpl()->SetAlbumThumbnail(bitmapImage);
+                    strongThis->HomePageControlImpl()->SetMiniThumbnail(bitmapImage);
                 }
             }
             catch (winrt::hresult_canceled const&)
@@ -5967,8 +5557,8 @@ namespace winrt::Last_Rich_Presence::implementation
                 // Cancellation is expected, just clear the thumbnails
                 if (!strongThis->m_isShuttingDown)
                 {
-                    strongThis->AlbumThumbnail().Source(nullptr);
-                    strongThis->HomeMiniThumbnail().Source(nullptr);
+                    strongThis->MusicPageControlImpl()->ClearAlbumThumbnail();
+                    strongThis->HomePageControlImpl()->ClearMiniThumbnail();
                 }
             }
             catch (...)
@@ -5976,8 +5566,8 @@ namespace winrt::Last_Rich_Presence::implementation
                 // On any other error, clear the thumbnails
                 if (!strongThis->m_isShuttingDown)
                 {
-                    strongThis->AlbumThumbnail().Source(nullptr);
-                    strongThis->HomeMiniThumbnail().Source(nullptr);
+                    strongThis->MusicPageControlImpl()->ClearAlbumThumbnail();
+                    strongThis->HomePageControlImpl()->ClearMiniThumbnail();
                 }
             }
         };
@@ -5987,112 +5577,17 @@ namespace winrt::Last_Rich_Presence::implementation
 
     void MainWindow::SetLivePulseActive(bool active)
     {
-        if (m_isShuttingDown)
-            active = false;
-
-        auto motionEnabled = IsMotionEnabled();
-
-        if (!active)
-        {
-            if (m_livePulseStoryboard)
-            {
-                try { m_livePulseStoryboard.Stop(); } catch (...) {}
-                m_livePulseStoryboard = nullptr;
-            }
-
-            TransitionElementVisibility(StatusLiveBadge(), false, 4.0);
-            StatusLiveDot().Opacity(1.0);
-            return;
-        }
-
-        TransitionElementVisibility(StatusLiveBadge(), true, 4.0);
-
-        if (!motionEnabled)
-        {
-            StatusLiveDot().Opacity(1.0);
-            return;
-        }
-
-        if (m_livePulseStoryboard)
-            return;
-
-        auto pulse = Microsoft::UI::Xaml::Media::Animation::DoubleAnimation();
-        pulse.From(1.0);
-        pulse.To(0.62);
-        pulse.AutoReverse(true);
-        pulse.Duration(MotionDuration(MotionTokens::LivePulseMs));
-        pulse.EasingFunction(MotionEaseInOutSine());
-        pulse.RepeatBehavior(Microsoft::UI::Xaml::Media::Animation::RepeatBehaviorHelper::Forever());
-
-        auto storyboard = Microsoft::UI::Xaml::Media::Animation::Storyboard();
-        storyboard.Children().Append(pulse);
-        Microsoft::UI::Xaml::Media::Animation::Storyboard::SetTarget(pulse, StatusLiveDot());
-        Microsoft::UI::Xaml::Media::Animation::Storyboard::SetTargetProperty(pulse, L"Opacity");
-
-        m_livePulseStoryboard = storyboard;
-        storyboard.Begin();
+        HomePageControlImpl()->SetLivePulseActive(active && !m_isShuttingDown, IsMotionEnabled());
     }
 
     void MainWindow::ShowTrackTransitionSkeleton()
     {
-        if (!IsMotionEnabled())
-        {
-            HideTrackTransitionSkeleton();
-            return;
-        }
-
-        auto overlay = HomeTrackSkeletonOverlay();
-        overlay.Visibility(Visibility::Visible);
-        overlay.Opacity(1.0);
-
-        if (!m_trackSkeletonStoryboard)
-        {
-            auto pulse = Microsoft::UI::Xaml::Media::Animation::DoubleAnimation();
-            pulse.From(0.78);
-            pulse.To(1.0);
-            pulse.AutoReverse(true);
-            pulse.Duration(MotionDuration(MotionTokens::SkeletonPulseMs));
-            pulse.EasingFunction(MotionEaseInOutSine());
-            pulse.RepeatBehavior(Microsoft::UI::Xaml::Media::Animation::RepeatBehaviorHelper::Forever());
-
-            auto storyboard = Microsoft::UI::Xaml::Media::Animation::Storyboard();
-            storyboard.Children().Append(pulse);
-            Microsoft::UI::Xaml::Media::Animation::Storyboard::SetTarget(pulse, overlay);
-            Microsoft::UI::Xaml::Media::Animation::Storyboard::SetTargetProperty(pulse, L"Opacity");
-
-            m_trackSkeletonStoryboard = storyboard;
-            storyboard.Begin();
-        }
-
-        if (!m_trackSkeletonTimer)
-        {
-            m_trackSkeletonTimer = DispatcherTimer();
-            m_trackSkeletonTimer.Tick([this](IInspectable const&, IInspectable const&)
-            {
-                if (m_trackSkeletonTimer)
-                    m_trackSkeletonTimer.Stop();
-                HideTrackTransitionSkeleton();
-            });
-        }
-
-        m_trackSkeletonTimer.Interval(std::chrono::milliseconds(MotionTokens::SkeletonDwellMs));
-        m_trackSkeletonTimer.Start();
+        HomePageControlImpl()->ShowTrackTransitionSkeleton(IsMotionEnabled());
     }
 
     void MainWindow::HideTrackTransitionSkeleton()
     {
-        if (m_trackSkeletonTimer)
-            m_trackSkeletonTimer.Stop();
-
-        if (m_trackSkeletonStoryboard)
-        {
-            try { m_trackSkeletonStoryboard.Stop(); } catch (...) {}
-            m_trackSkeletonStoryboard = nullptr;
-        }
-
-        auto overlay = HomeTrackSkeletonOverlay();
-        overlay.Visibility(Visibility::Collapsed);
-        overlay.Opacity(1.0);
+        HomePageControlImpl()->HideTrackTransitionSkeleton();
     }
 
     // =====================================================================
@@ -6101,84 +5596,7 @@ namespace winrt::Last_Rich_Presence::implementation
 
     void MainWindow::UpdateConnectionStatus()
     {
-        bool connected = m_presence->IsConnected();
-
-        bool bridgeStarted = false;
-        bool bridgeBinding = false;
-        bool extensionConnected = false;
-        bool hasHint = false;
-        int64_t hintAgeSeconds = -1;
-        {
-            auto& state = GetHintServerState();
-            std::lock_guard<std::mutex> lock(state.mutex);
-            bridgeStarted = state.started;
-            bridgeBinding = state.binding;
-            extensionConnected = IsExtensionConnected(state);
-            hasHint = state.hasHint;
-
-            if (hasHint)
-            {
-                hintAgeSeconds = std::chrono::duration_cast<std::chrono::seconds>(
-                    std::chrono::steady_clock::now() - state.hint.updatedAt).count();
-                if (hintAgeSeconds < 0)
-                    hintAgeSeconds = 0;
-            }
-        }
-
-        if (!m_enabled)
-        {
-            StatusIndicator().Fill(Application::Current().Resources().Lookup(box_value(L"StatusDisconnectedBrush")).as<Brush>());
-            StatusText().Text(L"Disabled");
-            StatusSubtext().Text(L"Rich Presence is off");
-            HomeHealthText().Text(L"Discord: OFF | Bridge: OFF | Hint age: --");
-            SetLivePulseActive(false);
-            return;
-        }
-
-        if (connected)
-        {
-            StatusIndicator().Fill(Application::Current().Resources().Lookup(box_value(L"StatusConnectedBrush")).as<Brush>());
-            StatusText().Text(L"Connected to Discord");
-            StatusSubtext().Text(L"Rich Presence is active");
-        }
-        else
-        {
-            StatusIndicator().Fill(Application::Current().Resources().Lookup(box_value(L"StatusConnectingBrush")).as<Brush>());
-            StatusText().Text(L"Connecting to Discord...");
-            StatusSubtext().Text(L"Waiting for Discord client");
-        }
-
-        if (extensionConnected)
-        {
-            HomeExtensionIndicator().Fill(Application::Current().Resources().Lookup(box_value(L"StatusConnectedBrush")).as<Brush>());
-            HomeExtensionText().Text(L"Browser extension");
-            HomeExtensionSubtext().Text(hasHint
-                ? L"Receiving hints"
-                : L"Connected and ready");
-        }
-        else if (bridgeStarted || bridgeBinding)
-        {
-            HomeExtensionIndicator().Fill(Application::Current().Resources().Lookup(box_value(L"StatusConnectingBrush")).as<Brush>());
-            HomeExtensionText().Text(L"Browser bridge waiting");
-            HomeExtensionSubtext().Text(L"Open a supported browser tab");
-        }
-        else
-        {
-            HomeExtensionIndicator().Fill(Application::Current().Resources().Lookup(box_value(L"StatusDisconnectedBrush")).as<Brush>());
-            HomeExtensionText().Text(L"Browser bridge offline");
-            HomeExtensionSubtext().Text(L"Restart app to reinitialize bridge");
-        }
-
-        auto discordHealth = connected ? L"OK" : L"WAIT";
-        auto bridgeHealth = extensionConnected ? L"OK" : ((bridgeStarted || bridgeBinding) ? L"INIT" : L"DOWN");
-        auto hintAgeText = (hasHint && hintAgeSeconds >= 0)
-            ? (std::to_wstring(hintAgeSeconds) + L"s")
-            : std::wstring(L"--");
-
-        HomeHealthText().Text(
-            std::wstring(L"Discord: ") + discordHealth +
-            L" | Bridge: " + bridgeHealth +
-            L" | Hint age: " + hintAgeText);
+        bool connected = m_presence && m_presence->IsConnected();
 
         bool liveActive = false;
         if (connected && m_enabled)
@@ -6188,6 +5606,8 @@ namespace winrt::Last_Rich_Presence::implementation
                 ((std::chrono::steady_clock::now() - m_lastPresencePushAt) <= std::chrono::seconds(4));
             liveActive = activePlayback || recentPresencePush;
         }
+
+        HomePageControlImpl()->ApplyState(BuildHomePageState());
         SetLivePulseActive(liveActive);
 
         if (connected != m_wasConnected)
@@ -6285,284 +5705,48 @@ namespace winrt::Last_Rich_Presence::implementation
 
     void MainWindow::SetSongProgress(double progressPercent)
     {
-        if (progressPercent < 0.0)
-            progressPercent = 0.0;
-        if (progressPercent > 100.0)
-            progressPercent = 100.0;
-
-        auto current = SongProgressBar().Value();
-        auto delta = std::abs(progressPercent - current);
-        bool canInterpolate =
-            IsMotionEnabled() &&
-            m_lastMedia.isPlaying &&
-            !m_lastMedia.title.empty() &&
-            progressPercent > 0.0 &&
-            delta > 0.02 &&
-            delta <= 16.0;
-
-        if (!canInterpolate)
-        {
-            if (m_songProgressStoryboard)
-            {
-                try { m_songProgressStoryboard.Stop(); } catch (...) {}
-                m_songProgressStoryboard = nullptr;
-            }
-
-            SongProgressBar().Value(progressPercent);
-            UpdateSongWaveClip(progressPercent);
-            return;
-        }
-
-        if (m_songProgressStoryboard)
-        {
-            try { m_songProgressStoryboard.Stop(); } catch (...) {}
-            m_songProgressStoryboard = nullptr;
-        }
-
-        auto progressAnimation = Microsoft::UI::Xaml::Media::Animation::DoubleAnimation();
-        progressAnimation.From(current);
-        progressAnimation.To(progressPercent);
-        progressAnimation.Duration(MotionDuration(MotionTokens::ProgressStepMs));
-        progressAnimation.EnableDependentAnimation(true);
-
-        auto storyboard = Microsoft::UI::Xaml::Media::Animation::Storyboard();
-        storyboard.Children().Append(progressAnimation);
-        Microsoft::UI::Xaml::Media::Animation::Storyboard::SetTarget(progressAnimation, SongProgressBar());
-        Microsoft::UI::Xaml::Media::Animation::Storyboard::SetTargetProperty(progressAnimation, L"Value");
-
-        auto weak = get_weak();
-        storyboard.Completed([weak](IInspectable const&, IInspectable const&)
-        {
-            if (auto strong = weak.get())
-                strong->m_songProgressStoryboard = nullptr;
-        });
-
-        m_songProgressStoryboard = storyboard;
-        storyboard.Begin();
+        MusicPageControlImpl()->SetSongProgress(
+            progressPercent,
+            IsMotionEnabled(),
+            m_lastMedia.isPlaying,
+            !m_lastMedia.title.empty());
     }
 
     void MainWindow::UpdateSongWaveClip(double progressPercent)
     {
-        auto width = SongWaveViewport().ActualWidth();
-        auto height = SongWaveViewport().ActualHeight();
-
-        if (width <= 0.0)
-        {
-            SongWaveFillClip().Rect(Rect{ 0.0f, 0.0f, 0.0f, static_cast<float>(height > 0.0 ? height : 12.0) });
-            return;
-        }
-
-        if (height <= 0.0)
-            height = 12.0;
-
-        auto clamped = progressPercent;
-        if (clamped < 0.0)
-            clamped = 0.0;
-        if (clamped > 100.0)
-            clamped = 100.0;
-
-        auto fillWidth = width * (clamped / 100.0);
-        if (fillWidth < 0.0)
-            fillWidth = 0.0;
-        if (fillWidth > width)
-            fillWidth = width;
-
-        SongWaveFillClip().Rect(Rect{
-            0.0f,
-            0.0f,
-            static_cast<float>(fillWidth),
-            static_cast<float>(height)
-            });
+        MusicPageControlImpl()->SetSongProgress(
+            progressPercent,
+            IsMotionEnabled(),
+            m_lastMedia.isPlaying,
+            !m_lastMedia.title.empty());
     }
 
     void MainWindow::SetSongWaveActive(bool active)
     {
-        if (m_isShuttingDown || !IsMotionEnabled())
-            active = false;
-
-        if (!active)
-        {
-            if (m_songWaveStoryboard)
-            {
-                try { m_songWaveStoryboard.Stop(); } catch (...) {}
-                m_songWaveStoryboard = nullptr;
-            }
-
-            SongWaveFillTransform().X(0.0);
-            SongWaveFillPath().Opacity(0.95);
-            return;
-        }
-
-        if (m_songWaveStoryboard)
-            return;
-
-        auto shift = Microsoft::UI::Xaml::Media::Animation::DoubleAnimation();
-        shift.From(0.0);
-        shift.To(-10.0);
-        shift.AutoReverse(true);
-        shift.Duration(MotionDuration(MotionTokens::WaveShiftMs));
-        shift.EasingFunction(MotionEaseInOutSine());
-        shift.RepeatBehavior(Microsoft::UI::Xaml::Media::Animation::RepeatBehaviorHelper::Forever());
-
-        auto glow = Microsoft::UI::Xaml::Media::Animation::DoubleAnimation();
-        glow.From(0.70);
-        glow.To(1.0);
-        glow.AutoReverse(true);
-        glow.Duration(MotionDuration(MotionTokens::WaveGlowMs));
-        glow.EasingFunction(MotionEaseInOutSine());
-        glow.RepeatBehavior(Microsoft::UI::Xaml::Media::Animation::RepeatBehaviorHelper::Forever());
-
-        auto storyboard = Microsoft::UI::Xaml::Media::Animation::Storyboard();
-        storyboard.Children().Append(shift);
-        storyboard.Children().Append(glow);
-        Microsoft::UI::Xaml::Media::Animation::Storyboard::SetTarget(shift, SongWaveFillTransform());
-        Microsoft::UI::Xaml::Media::Animation::Storyboard::SetTargetProperty(shift, L"X");
-        Microsoft::UI::Xaml::Media::Animation::Storyboard::SetTarget(glow, SongWaveFillPath());
-        Microsoft::UI::Xaml::Media::Animation::Storyboard::SetTargetProperty(glow, L"Opacity");
-
-        m_songWaveStoryboard = storyboard;
-        storyboard.Begin();
+        MusicPageControlImpl()->SetSongWaveActive(active && !m_isShuttingDown, IsMotionEnabled());
     }
 
     void MainWindow::SetHomeMiniProgress(double progressPercent)
     {
-        if (progressPercent < 0.0)
-            progressPercent = 0.0;
-        if (progressPercent > 100.0)
-            progressPercent = 100.0;
-
-        auto current = HomeMiniProgressBar().Value();
-        auto delta = std::abs(progressPercent - current);
-        bool canInterpolate =
-            IsMotionEnabled() &&
-            m_lastMedia.isPlaying &&
-            !m_lastMedia.title.empty() &&
-            progressPercent > 0.0 &&
-            delta > 0.02 &&
-            delta <= 16.0;
-
-        if (!canInterpolate)
-        {
-            if (m_homeMiniProgressStoryboard)
-            {
-                try { m_homeMiniProgressStoryboard.Stop(); } catch (...) {}
-                m_homeMiniProgressStoryboard = nullptr;
-            }
-
-            HomeMiniProgressBar().Value(progressPercent);
-            UpdateHomeMiniWaveClip(progressPercent);
-            return;
-        }
-
-        if (m_homeMiniProgressStoryboard)
-        {
-            try { m_homeMiniProgressStoryboard.Stop(); } catch (...) {}
-            m_homeMiniProgressStoryboard = nullptr;
-        }
-
-        auto progressAnimation = Microsoft::UI::Xaml::Media::Animation::DoubleAnimation();
-        progressAnimation.From(current);
-        progressAnimation.To(progressPercent);
-        progressAnimation.Duration(MotionDuration(MotionTokens::ProgressStepMs));
-        progressAnimation.EnableDependentAnimation(true);
-
-        auto storyboard = Microsoft::UI::Xaml::Media::Animation::Storyboard();
-        storyboard.Children().Append(progressAnimation);
-        Microsoft::UI::Xaml::Media::Animation::Storyboard::SetTarget(progressAnimation, HomeMiniProgressBar());
-        Microsoft::UI::Xaml::Media::Animation::Storyboard::SetTargetProperty(progressAnimation, L"Value");
-
-        auto weak = get_weak();
-        storyboard.Completed([weak](IInspectable const&, IInspectable const&)
-        {
-            if (auto strong = weak.get())
-                strong->m_homeMiniProgressStoryboard = nullptr;
-        });
-
-        m_homeMiniProgressStoryboard = storyboard;
-        storyboard.Begin();
+        HomePageControlImpl()->SetMiniProgress(
+            progressPercent,
+            IsMotionEnabled(),
+            m_lastMedia.isPlaying,
+            !m_lastMedia.title.empty());
     }
 
     void MainWindow::UpdateHomeMiniWaveClip(double progressPercent)
     {
-        auto width = HomeMiniWaveViewport().ActualWidth();
-        auto height = HomeMiniWaveViewport().ActualHeight();
-
-        if (width <= 0.0)
-        {
-            HomeMiniWaveFillClip().Rect(Rect{ 0.0f, 0.0f, 0.0f, static_cast<float>(height > 0.0 ? height : 8.0) });
-            return;
-        }
-
-        if (height <= 0.0)
-            height = 8.0;
-
-        auto clamped = progressPercent;
-        if (clamped < 0.0)
-            clamped = 0.0;
-        if (clamped > 100.0)
-            clamped = 100.0;
-
-        auto fillWidth = width * (clamped / 100.0);
-        if (fillWidth < 0.0)
-            fillWidth = 0.0;
-        if (fillWidth > width)
-            fillWidth = width;
-
-        HomeMiniWaveFillClip().Rect(Rect{
-            0.0f,
-            0.0f,
-            static_cast<float>(fillWidth),
-            static_cast<float>(height)
-            });
+        HomePageControlImpl()->SetMiniProgress(
+            progressPercent,
+            IsMotionEnabled(),
+            m_lastMedia.isPlaying,
+            !m_lastMedia.title.empty());
     }
 
     void MainWindow::SetHomeMiniWaveActive(bool active)
     {
-        if (m_isShuttingDown || !IsMotionEnabled())
-            active = false;
-
-        if (!active)
-        {
-            if (m_homeMiniWaveStoryboard)
-            {
-                try { m_homeMiniWaveStoryboard.Stop(); } catch (...) {}
-                m_homeMiniWaveStoryboard = nullptr;
-            }
-
-            HomeMiniWaveFillTransform().X(0.0);
-            HomeMiniWaveFillPath().Opacity(0.95);
-            return;
-        }
-
-        if (m_homeMiniWaveStoryboard)
-            return;
-
-        auto shift = Microsoft::UI::Xaml::Media::Animation::DoubleAnimation();
-        shift.From(0.0);
-        shift.To(-8.0);
-        shift.AutoReverse(true);
-        shift.Duration(MotionDuration(MotionTokens::HomeWaveShiftMs));
-        shift.EasingFunction(MotionEaseInOutSine());
-        shift.RepeatBehavior(Microsoft::UI::Xaml::Media::Animation::RepeatBehaviorHelper::Forever());
-
-        auto glow = Microsoft::UI::Xaml::Media::Animation::DoubleAnimation();
-        glow.From(0.74);
-        glow.To(1.0);
-        glow.AutoReverse(true);
-        glow.Duration(MotionDuration(MotionTokens::HomeWaveGlowMs));
-        glow.EasingFunction(MotionEaseInOutSine());
-        glow.RepeatBehavior(Microsoft::UI::Xaml::Media::Animation::RepeatBehaviorHelper::Forever());
-
-        auto storyboard = Microsoft::UI::Xaml::Media::Animation::Storyboard();
-        storyboard.Children().Append(shift);
-        storyboard.Children().Append(glow);
-        Microsoft::UI::Xaml::Media::Animation::Storyboard::SetTarget(shift, HomeMiniWaveFillTransform());
-        Microsoft::UI::Xaml::Media::Animation::Storyboard::SetTargetProperty(shift, L"X");
-        Microsoft::UI::Xaml::Media::Animation::Storyboard::SetTarget(glow, HomeMiniWaveFillPath());
-        Microsoft::UI::Xaml::Media::Animation::Storyboard::SetTargetProperty(glow, L"Opacity");
-
-        m_homeMiniWaveStoryboard = storyboard;
-        storyboard.Begin();
+        HomePageControlImpl()->SetMiniWaveActive(active && !m_isShuttingDown, IsMotionEnabled());
     }
 
     // =====================================================================
@@ -6586,39 +5770,17 @@ namespace winrt::Last_Rich_Presence::implementation
 
             if (!info.title.empty())
             {
+                int durSec = static_cast<int>(info.duration.count());
+                int displayPos = static_cast<int>(info.position.count());
+
                 int liveHintPos = 0;
                 int liveHintDur = 0;
                 if (TryGetLiveHintTimeline(info, liveHintPos, liveHintDur))
                 {
-                    auto displayPos = liveHintPos;
-                    auto durSec = liveHintDur;
-
-                    PositionText().Text(FormatTime(displayPos));
-                    DurationText().Text(FormatTime(durSec));
-
-                    if (durSec > 0)
-                    {
-                        double progress = (static_cast<double>(displayPos) / durSec) * 100.0;
-                        if (progress < 0.0) progress = 0.0;
-                        if (progress > 100.0) progress = 100.0;
-                        SetSongProgress(progress);
-                        SetHomeMiniProgress(progress);
-                    }
-                    else
-                    {
-                        SetSongProgress(0);
-                        SetHomeMiniProgress(0);
-                    }
-
-                    HomeMiniTimer().Text(FormatTime(displayPos) + L" / " + FormatTime(durSec > 0 ? durSec : 0));
-                    UpdateConnectionStatus();
-                    return;
+                    displayPos = liveHintPos;
+                    durSec = liveHintDur;
                 }
-
-                auto durSec = static_cast<int>(info.duration.count());
-                auto displayPos = static_cast<int>(info.position.count());
-
-                if (info.isPlaying)
+                else if (info.isPlaying)
                 {
                     auto now = std::chrono::system_clock::now();
                     if (info.startTime.time_since_epoch().count() > 0)
@@ -6630,67 +5792,19 @@ namespace winrt::Last_Rich_Presence::implementation
                         if (estimatedPos < 0)
                             estimatedPos = 0;
 
-                        if (durSec > 0)
-                        {
-                            if (estimatedPos > durSec) estimatedPos = durSec;
-                            double progress = (static_cast<double>(estimatedPos) / durSec) * 100.0;
-                            SetSongProgress(progress);
-                            SetHomeMiniProgress(progress);
-                        }
-                        else
-                        {
-                            SetSongProgress(0);
-                            SetHomeMiniProgress(0);
-                        }
-
                         displayPos = static_cast<int>(estimatedPos);
-                        PositionText().Text(FormatTime(displayPos));
-                    }
-                    else
-                    {
-                        auto posSec = static_cast<int>(info.position.count());
-                        displayPos = posSec;
-                        PositionText().Text(FormatTime(posSec));
-
-                        if (durSec > 0)
-                        {
-                            double progress = (static_cast<double>(posSec) / durSec) * 100.0;
-                            if (progress < 0.0) progress = 0.0;
-                            if (progress > 100.0) progress = 100.0;
-                            SetSongProgress(progress);
-                            SetHomeMiniProgress(progress);
-                        }
-                        else
-                        {
-                            SetSongProgress(0);
-                            SetHomeMiniProgress(0);
-                        }
-                    }
-                }
-                else
-                {
-                    auto posSec = static_cast<int>(info.position.count());
-                    PositionText().Text(FormatTime(posSec));
-                    displayPos = posSec;
-
-                    if (durSec > 0)
-                    {
-                        double progress = (static_cast<double>(posSec) / durSec) * 100.0;
-                        if (progress < 0.0) progress = 0.0;
-                        if (progress > 100.0) progress = 100.0;
-                        SetSongProgress(progress);
-                        SetHomeMiniProgress(progress);
-                    }
-                    else
-                    {
-                        SetSongProgress(0);
-                        SetHomeMiniProgress(0);
                     }
                 }
 
-                if (displayPos < 0) displayPos = 0;
-                if (durSec > 0 && displayPos > durSec) displayPos = durSec;
-                HomeMiniTimer().Text(FormatTime(displayPos) + L" / " + FormatTime(durSec > 0 ? durSec : 0));
+                if (displayPos < 0)
+                    displayPos = 0;
+                if (durSec > 0 && displayPos > durSec)
+                    displayPos = durSec;
+
+                auto musicState = BuildMusicPageState(info, displayPos, durSec);
+                MusicPageControlImpl()->ApplyState(musicState);
+                HomePageControlImpl()->ApplyState(BuildHomePageState(displayPos, durSec));
+                SetHomeMiniProgress(musicState.progressPercent);
             }
 
             UpdateConnectionStatus();
@@ -6713,215 +5827,41 @@ namespace winrt::Last_Rich_Presence::implementation
 
     lrp::settings::PersistedSettings MainWindow::BuildPersistedSettingsSnapshot()
     {
-        lrp::settings::PersistedSettings settings;
-        settings.media.showTimestamps = TimestampToggle().IsOn();
-        settings.media.showSource = SourceToggle().IsOn();
-        settings.media.sourceDebugMode = m_sourceDebugMode;
-        settings.media.showPaused = PausedToggle().IsOn();
-        settings.media.showAlbumArt = AlbumArtToggle().IsOn();
-        settings.media.showDefaultIdleStatus = m_showDefaultIdleStatus;
-        settings.media.sensitiveKeywordFilter = m_sensitiveKeywordFilter;
-        settings.media.strictBrowserPrivacy = m_strictBrowserPrivacy;
-        settings.media.suppressBrowserAlbumArt = m_suppressBrowserAlbumArt;
-        settings.media.blockedAppSiteTermsRaw = m_blockedAppSiteTermsRaw;
-        settings.media.activityTypeOverride = m_mediaActivityTypeOverride;
-
+        auto settings = m_settings;
         settings.behavior.richPresenceEnabled = m_enabled;
-        settings.behavior.closeToTrayOnClose = m_closeToTrayOnClose;
-        settings.behavior.launchOnStartup = m_launchOnStartup;
-        settings.behavior.startMinimizedToTray = m_startMinimizedToTray;
-        settings.behavior.trayLeftClickToggles = m_trayLeftClickToggles;
-        settings.behavior.themeMode = m_themeMode;
-
-        settings.productive.enabled = m_productiveEnabled;
-        settings.productive.detectionMode = m_productiveDetectionMode;
-        settings.productive.showProjectName = m_productiveShowProjectName;
-        settings.productive.activityTypeOverride = m_productiveActivityTypeOverride;
-        settings.productive.wordEnabled = m_productiveWordEnabled;
-        settings.productive.excelEnabled = m_productiveExcelEnabled;
-        settings.productive.powerPointEnabled = m_productivePowerPointEnabled;
-        settings.productive.oneNoteEnabled = m_productiveOneNoteEnabled;
-        settings.productive.accessEnabled = m_productiveAccessEnabled;
-        settings.productive.publisherEnabled = m_productivePublisherEnabled;
-        settings.productive.visioEnabled = m_productiveVisioEnabled;
-        settings.productive.projectEnabled = m_productiveProjectEnabled;
-        settings.productive.codexEnabled = m_productiveCodexEnabled;
-
-        settings.creative.enabled = m_creativeEnabled;
-        settings.creative.priority = m_creativePriority;
-        settings.creative.detectionMode = m_creativeDetectionMode;
-        settings.creative.showProjectName = m_creativeShowProjectName;
-        settings.creative.showWindowTitle = m_creativeShowWindowTitle;
-        settings.creative.activityTypeOverride = m_creativeActivityTypeOverride;
-        settings.creative.photoshopEnabled = m_creativePhotoshopEnabled;
-        settings.creative.illustratorEnabled = m_creativeIllustratorEnabled;
-        settings.creative.premiereEnabled = m_creativePremiereEnabled;
-        settings.creative.afterEffectsEnabled = m_creativeAfterEffectsEnabled;
-        settings.creative.inDesignEnabled = m_creativeInDesignEnabled;
-        settings.creative.auditionEnabled = m_creativeAuditionEnabled;
-        settings.creative.mediaEncoderEnabled = m_creativeMediaEncoderEnabled;
-        settings.creative.lightroomEnabled = m_creativeLightroomEnabled;
-        settings.creative.lightroomClassicEnabled = m_creativeLightroomClassicEnabled;
-        settings.creative.inCopyEnabled = m_creativeInCopyEnabled;
-        settings.creative.dreamweaverEnabled = m_creativeDreamweaverEnabled;
-        settings.creative.animateEnabled = m_creativeAnimateEnabled;
-        settings.creative.xdEnabled = m_creativeXdEnabled;
-        settings.creative.bridgeEnabled = m_creativeBridgeEnabled;
-        settings.creative.characterAnimatorEnabled = m_creativeCharacterAnimatorEnabled;
-        settings.creative.frescoEnabled = m_creativeFrescoEnabled;
-        settings.creative.dimensionEnabled = m_creativeDimensionEnabled;
-        settings.creative.substanceEnabled = m_creativeSubstanceEnabled;
-        settings.creative.acrobatEnabled = m_creativeAcrobatEnabled;
-        settings.creative.otherAdobeEnabled = m_creativeOtherAdobeEnabled;
-        settings.creative.privacyMode = m_creativePrivacyMode;
-        settings.creative.idleBehavior = m_creativeIdleBehavior;
         return settings;
     }
 
     void MainWindow::ApplyPersistedSettingsSnapshot(const lrp::settings::PersistedSettings& settings)
     {
+        m_settings = settings;
         m_enabled = settings.behavior.richPresenceEnabled;
-        EnableToggle().IsOn(m_enabled);
+        SyncShellSettingsFromControls();
+        SyncMusicSettingsFromControls();
+        SyncProductiveSettingsFromControls();
+        SyncCreativeSettingsFromControls();
 
-        TimestampToggle().IsOn(settings.media.showTimestamps);
-        m_presence->SetShowTimestamps(settings.media.showTimestamps);
+        MusicPageControlImpl()->ApplySettings(lrp::ui::BuildMusicPageSettings(m_settings));
+        SettingsPageControlImpl()->ApplySettings(lrp::ui::BuildSettingsPageSettings(m_settings));
+        ProductivityPageControlImpl()->ApplySettings(lrp::ui::BuildProductivityPageSettings(m_settings));
+        CreativePageControlImpl()->ApplySettings(lrp::ui::BuildCreativePageSettings(m_settings));
 
-        SourceToggle().IsOn(settings.media.showSource);
-        m_presence->SetShowSource(settings.media.showSource);
+        if (m_presence)
+        {
+            m_presence->SetShowTimestamps(m_settings.media.showTimestamps);
+            m_presence->SetShowSource(m_settings.media.showSource);
+            m_presence->SetShowPaused(m_settings.media.showPaused);
+            m_presence->SetShowAlbumArt(m_settings.media.showAlbumArt);
+            m_presence->SetShowIdleStatus(m_settings.media.showDefaultIdleStatus);
+            m_presence->SetSensitiveKeywordFilter(m_settings.media.sensitiveKeywordFilter);
+            m_presence->SetStrictBrowserPrivacy(m_settings.media.strictBrowserPrivacy);
+            m_presence->SetSuppressBrowserAlbumArt(m_settings.media.suppressBrowserAlbumArt);
+            m_presence->SetBlockedAppSiteTerms(ParseBlockedTerms(m_blockedAppSiteTermsRaw));
+        }
 
-        m_sourceDebugMode = settings.media.sourceDebugMode;
-        SourceDebugToggle().IsOn(m_sourceDebugMode);
-
-        PausedToggle().IsOn(settings.media.showPaused);
-        m_presence->SetShowPaused(settings.media.showPaused);
-
-        AlbumArtToggle().IsOn(settings.media.showAlbumArt);
-        m_presence->SetShowAlbumArt(settings.media.showAlbumArt);
-
-        m_showDefaultIdleStatus = settings.media.showDefaultIdleStatus;
-        DefaultIdleStatusToggle().IsOn(m_showDefaultIdleStatus);
-        m_presence->SetShowIdleStatus(m_showDefaultIdleStatus);
-
-        m_closeToTrayOnClose = settings.behavior.closeToTrayOnClose;
-        CloseToTrayToggle().IsOn(m_closeToTrayOnClose);
-
-        m_launchOnStartup = settings.behavior.launchOnStartup;
-        LaunchOnStartupToggle().IsOn(m_launchOnStartup);
-
-        m_startMinimizedToTray = settings.behavior.startMinimizedToTray;
-        StartMinimizedToggle().IsOn(m_startMinimizedToTray);
-
-        m_trayLeftClickToggles = settings.behavior.trayLeftClickToggles;
-        TrayLeftClickToggle().IsOn(m_trayLeftClickToggles);
-
-        m_sensitiveKeywordFilter = settings.media.sensitiveKeywordFilter;
-        SensitiveFilterToggle().IsOn(m_sensitiveKeywordFilter);
-        m_presence->SetSensitiveKeywordFilter(m_sensitiveKeywordFilter);
-
-        m_strictBrowserPrivacy = settings.media.strictBrowserPrivacy;
-        StrictBrowserPrivacyToggle().IsOn(m_strictBrowserPrivacy);
-        m_presence->SetStrictBrowserPrivacy(m_strictBrowserPrivacy);
-
-        m_suppressBrowserAlbumArt = settings.media.suppressBrowserAlbumArt;
-        SuppressBrowserArtToggle().IsOn(m_suppressBrowserAlbumArt);
-        m_presence->SetSuppressBrowserAlbumArt(m_suppressBrowserAlbumArt);
-
-        m_themeMode = settings.behavior.themeMode;
-        ThemeModeCombo().SelectedIndex(ThemeModeToComboIndex(m_themeMode));
         ApplyThemeMode();
-
-        m_blockedAppSiteTermsRaw = settings.media.blockedAppSiteTermsRaw;
-        BlockedAppSitesBox().Text(m_blockedAppSiteTermsRaw);
-        m_presence->SetBlockedAppSiteTerms(ParseBlockedTerms(m_blockedAppSiteTermsRaw));
-
-        m_mediaActivityTypeOverride = settings.media.activityTypeOverride;
-        m_creativeActivityTypeOverride = settings.creative.activityTypeOverride;
-        m_productiveActivityTypeOverride = settings.productive.activityTypeOverride;
-        MediaActivityTypeCombo().SelectedIndex(ActivityTypeOverrideToComboIndex(m_mediaActivityTypeOverride));
-        CreativeActivityTypeCombo().SelectedIndex(ActivityTypeOverrideToComboIndex(m_creativeActivityTypeOverride));
-        ProductiveActivityTypeCombo().SelectedIndex(ActivityTypeOverrideToComboIndex(m_productiveActivityTypeOverride));
         ApplyActivityTypeOverrides();
-
-        m_productiveEnabled = settings.productive.enabled;
-        ProductiveEnableToggle().IsOn(m_productiveEnabled);
-        m_productiveDetectionMode = settings.productive.detectionMode;
-        ProductiveDetectionModeCombo().SelectedIndex(ProductiveDetectionModeToComboIndex(m_productiveDetectionMode));
-        m_productiveShowProjectName = settings.productive.showProjectName;
-        ProductiveShowProjectToggle().IsOn(m_productiveShowProjectName);
-        m_productiveWordEnabled = settings.productive.wordEnabled;
-        ProductiveAppWordCheck().IsChecked(settings.productive.wordEnabled);
-        m_productiveExcelEnabled = settings.productive.excelEnabled;
-        ProductiveAppExcelCheck().IsChecked(settings.productive.excelEnabled);
-        m_productivePowerPointEnabled = settings.productive.powerPointEnabled;
-        ProductiveAppPowerPointCheck().IsChecked(settings.productive.powerPointEnabled);
-        m_productiveOneNoteEnabled = settings.productive.oneNoteEnabled;
-        ProductiveAppOneNoteCheck().IsChecked(settings.productive.oneNoteEnabled);
-        m_productiveAccessEnabled = settings.productive.accessEnabled;
-        ProductiveAppAccessCheck().IsChecked(settings.productive.accessEnabled);
-        m_productivePublisherEnabled = settings.productive.publisherEnabled;
-        ProductiveAppPublisherCheck().IsChecked(settings.productive.publisherEnabled);
-        m_productiveVisioEnabled = settings.productive.visioEnabled;
-        ProductiveAppVisioCheck().IsChecked(settings.productive.visioEnabled);
-        m_productiveProjectEnabled = settings.productive.projectEnabled;
-        ProductiveAppProjectCheck().IsChecked(settings.productive.projectEnabled);
-        m_productiveCodexEnabled = settings.productive.codexEnabled;
-        ProductiveAppCodexCheck().IsChecked(settings.productive.codexEnabled);
-
-        m_creativeEnabled = settings.creative.enabled;
-        CreativeEnableToggle().IsOn(m_creativeEnabled);
-        m_creativePriority = settings.creative.priority;
-        CreativePriorityCombo().SelectedIndex(CreativePriorityModeToComboIndex(m_creativePriority));
-        m_creativeDetectionMode = settings.creative.detectionMode;
-        CreativeDetectionModeCombo().SelectedIndex(CreativeDetectionModeToComboIndex(m_creativeDetectionMode));
-        m_creativeShowProjectName = settings.creative.showProjectName;
-        CreativeShowProjectToggle().IsOn(settings.creative.showProjectName);
-        m_creativeShowWindowTitle = settings.creative.showWindowTitle;
-        CreativeShowWindowTitleToggle().IsOn(settings.creative.showWindowTitle);
-        m_creativePhotoshopEnabled = settings.creative.photoshopEnabled;
-        CreativeAppPhotoshopCheck().IsChecked(settings.creative.photoshopEnabled);
-        m_creativeIllustratorEnabled = settings.creative.illustratorEnabled;
-        CreativeAppIllustratorCheck().IsChecked(settings.creative.illustratorEnabled);
-        m_creativePremiereEnabled = settings.creative.premiereEnabled;
-        CreativeAppPremiereCheck().IsChecked(settings.creative.premiereEnabled);
-        m_creativeAfterEffectsEnabled = settings.creative.afterEffectsEnabled;
-        CreativeAppAfterEffectsCheck().IsChecked(settings.creative.afterEffectsEnabled);
-        m_creativeInDesignEnabled = settings.creative.inDesignEnabled;
-        CreativeAppInDesignCheck().IsChecked(settings.creative.inDesignEnabled);
-        m_creativeAuditionEnabled = settings.creative.auditionEnabled;
-        CreativeAppAuditionCheck().IsChecked(settings.creative.auditionEnabled);
-        m_creativeMediaEncoderEnabled = settings.creative.mediaEncoderEnabled;
-        CreativeAppMediaEncoderCheck().IsChecked(settings.creative.mediaEncoderEnabled);
-        m_creativeLightroomEnabled = settings.creative.lightroomEnabled;
-        CreativeAppLightroomCheck().IsChecked(settings.creative.lightroomEnabled);
-        m_creativeLightroomClassicEnabled = settings.creative.lightroomClassicEnabled;
-        CreativeAppLightroomClassicCheck().IsChecked(settings.creative.lightroomClassicEnabled);
-        m_creativeInCopyEnabled = settings.creative.inCopyEnabled;
-        CreativeAppInCopyCheck().IsChecked(settings.creative.inCopyEnabled);
-        m_creativeDreamweaverEnabled = settings.creative.dreamweaverEnabled;
-        CreativeAppDreamweaverCheck().IsChecked(settings.creative.dreamweaverEnabled);
-        m_creativeAnimateEnabled = settings.creative.animateEnabled;
-        CreativeAppAnimateCheck().IsChecked(settings.creative.animateEnabled);
-        m_creativeXdEnabled = settings.creative.xdEnabled;
-        CreativeAppXdCheck().IsChecked(settings.creative.xdEnabled);
-        m_creativeBridgeEnabled = settings.creative.bridgeEnabled;
-        CreativeAppBridgeCheck().IsChecked(settings.creative.bridgeEnabled);
-        m_creativeCharacterAnimatorEnabled = settings.creative.characterAnimatorEnabled;
-        CreativeAppCharacterAnimatorCheck().IsChecked(settings.creative.characterAnimatorEnabled);
-        m_creativeFrescoEnabled = settings.creative.frescoEnabled;
-        CreativeAppFrescoCheck().IsChecked(settings.creative.frescoEnabled);
-        m_creativeDimensionEnabled = settings.creative.dimensionEnabled;
-        CreativeAppDimensionCheck().IsChecked(settings.creative.dimensionEnabled);
-        m_creativeSubstanceEnabled = settings.creative.substanceEnabled;
-        CreativeAppSubstanceCheck().IsChecked(settings.creative.substanceEnabled);
-        m_creativeAcrobatEnabled = settings.creative.acrobatEnabled;
-        CreativeAppAcrobatCheck().IsChecked(settings.creative.acrobatEnabled);
-        m_creativeOtherAdobeEnabled = settings.creative.otherAdobeEnabled;
-        CreativeAppOtherAdobeCheck().IsChecked(settings.creative.otherAdobeEnabled);
-
-        m_creativePrivacyMode = settings.creative.privacyMode;
-        CreativePrivacyCombo().SelectedIndex(CreativePrivacyModeToComboIndex(m_creativePrivacyMode));
-        m_creativeIdleBehavior = settings.creative.idleBehavior;
-        CreativeIdleBehaviorCombo().SelectedIndex(CreativeIdleBehaviorToComboIndex(m_creativeIdleBehavior));
+        UpdateConnectionStatus();
     }
 
     void MainWindow::AppendSettingsIssues(const std::wstring& operation, const std::vector<lrp::settings::SettingsIssue>& issues)
@@ -6937,11 +5877,10 @@ namespace winrt::Last_Rich_Presence::implementation
         auto loadResult = lrp::settings::LoadPersistedSettingsWithResult();
         ApplyPersistedSettingsSnapshot(loadResult.settings);
 
-        SyncProductiveSettingsFromControls();
         UpdateProductivePreview(m_lastProductiveActivity);
-        SyncCreativeSettingsFromControls();
         ApplyCreativeDetectorRuntimeState();
         RefreshCreativePreviewFromCurrentState();
+        UpdateUI(m_lastMedia);
         AppendSettingsIssues(L"Load settings", loadResult.issues);
     }
 

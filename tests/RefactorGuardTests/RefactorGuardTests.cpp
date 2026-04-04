@@ -13,11 +13,15 @@
 
 #include "ActivityLaneCoordinator.h"
 #include "ActivityPresenceHelpers.h"
+#include "AppPage.h"
+#include "BrowserNativeMessaging.h"
 #include "DiagnosticsLog.h"
 #include "DiscordRPC.h"
 #include "SettingsImport.h"
 #include "SettingsModels.h"
+#include "SettingsUiBinder.h"
 #include "TextUtilities.h"
+#include "WindowTrayController.h"
 
 namespace
 {
@@ -328,6 +332,236 @@ namespace
             "ActivityTypeOverrideToComboIndex should map auto to the first option.");
         ExpectEqual(ToSettingStringActivityTypeOverride(3), std::wstring(L"3"),
             "Activity type persistence should remain numeric for compatibility.");
+    }
+
+    void TestAppPageHelpers()
+    {
+        using namespace lrp::ui;
+
+        Expect(kAppPageOrder.size() == 5, "App page order should contain every shell page.");
+        ExpectEqual(kAppPageOrder[0], AppPage::Home, "Home should remain the first page.");
+        ExpectEqual(kAppPageOrder[1], AppPage::Music, "Music should remain the second page.");
+        ExpectEqual(kAppPageOrder[2], AppPage::Creative, "Creative should remain ordered before Productivity.");
+        ExpectEqual(kAppPageOrder[3], AppPage::Productivity, "Productivity should remain ordered after Creative.");
+        ExpectEqual(kAppPageOrder[4], AppPage::Settings, "Settings should remain the final page.");
+
+        ExpectEqual(AppPageTag(AppPage::Home), std::wstring_view(L"Home"), "AppPageTag should map Home.");
+        ExpectEqual(AppPageTag(AppPage::Music), std::wstring_view(L"Music"), "AppPageTag should map Music.");
+        ExpectEqual(AppPageTag(AppPage::Creative), std::wstring_view(L"Creative"), "AppPageTag should map Creative.");
+        ExpectEqual(AppPageTag(AppPage::Productivity), std::wstring_view(L"Productivity"), "AppPageTag should map Productivity.");
+        ExpectEqual(AppPageTag(AppPage::Settings), std::wstring_view(L"Settings"), "AppPageTag should map Settings.");
+
+        ExpectEqual(AppPageIndex(AppPage::Home), 0, "AppPageIndex should map Home to 0.");
+        ExpectEqual(AppPageIndex(AppPage::Music), 1, "AppPageIndex should map Music to 1.");
+        ExpectEqual(AppPageIndex(AppPage::Creative), 2, "AppPageIndex should map Creative to 2.");
+        ExpectEqual(AppPageIndex(AppPage::Productivity), 3, "AppPageIndex should map Productivity to 3.");
+        ExpectEqual(AppPageIndex(AppPage::Settings), 4, "AppPageIndex should map Settings to the last slot.");
+        Expect(TryAppPageFromTag(L"Home").value_or(AppPage::Settings) == AppPage::Home,
+            "TryAppPageFromTag should parse Home.");
+        Expect(TryAppPageFromTag(L"Music").value_or(AppPage::Home) == AppPage::Music,
+            "TryAppPageFromTag should parse Music.");
+        Expect(TryAppPageFromTag(L"Creative").value_or(AppPage::Home) == AppPage::Creative,
+            "TryAppPageFromTag should parse Creative.");
+        Expect(TryAppPageFromTag(L"Productivity").value_or(AppPage::Home) == AppPage::Productivity,
+            "TryAppPageFromTag should parse Productivity.");
+        Expect(TryAppPageFromTag(L"Settings").value_or(AppPage::Home) == AppPage::Settings,
+            "TryAppPageFromTag should parse Settings.");
+        Expect(TryAppPageFromTag(L"Unknown").has_value() == false,
+            "TryAppPageFromTag should reject unknown tags.");
+        Expect(!IsKnownAppPageTag(L"Unknown"),
+            "IsKnownAppPageTag should reject unknown tags.");
+        Expect(TryAppPageAtIndex(2).value_or(AppPage::Home) == AppPage::Creative,
+            "TryAppPageAtIndex should resolve the shared page ordering.");
+        Expect(TryAppPageAtIndex(99).has_value() == false,
+            "TryAppPageAtIndex should reject out-of-range indices.");
+
+        for (size_t index = 0; index < kAppPageOrder.size(); ++index)
+        {
+            auto page = kAppPageOrder[index];
+            auto parsedIndex = TryAppPageIndex(page);
+            Expect(parsedIndex.has_value(),
+                "TryAppPageIndex should resolve every known page.");
+            ExpectEqual(parsedIndex.value_or(-1), static_cast<int>(index),
+                "TryAppPageIndex should match the canonical page ordering.");
+
+            auto tag = AppPageTag(page);
+            auto parsedPage = TryAppPageFromTag(tag);
+            Expect(parsedPage.has_value(),
+                "Known page tags should round-trip through TryAppPageFromTag.");
+            ExpectEqual(parsedPage.value_or(AppPage::Home), page,
+                "AppPage tags should round-trip to the same page.");
+        }
+
+        Expect(IsForwardAppPageTransition(AppPage::Music, AppPage::Creative),
+            "Music-to-Creative should be treated as a forward transition.");
+        Expect(IsForwardAppPageTransition(AppPage::Creative, AppPage::Productivity),
+            "Creative-to-Productivity should be treated as a forward transition.");
+        Expect(!IsForwardAppPageTransition(AppPage::Productivity, AppPage::Music),
+            "Productivity-to-Music should be treated as a backward transition.");
+        Expect(!IsForwardAppPageTransition(AppPage::Settings, AppPage::Creative),
+            "Settings-to-Creative should be treated as a backward transition.");
+    }
+
+    void TestBrowserNativeMessagingContract()
+    {
+        using namespace lrp::browser;
+
+        ExpectEqual(std::wstring(kBrowserNativeHostArgument), std::wstring(L"--browser-native-host"),
+            "The browser native host launch argument must remain stable.");
+        ExpectEqual(std::wstring(kNativeHostName), std::wstring(L"com.lastprojects.lastrichpresence"),
+            "The browser native host name must remain stable for browser registration.");
+        ExpectEqual(std::wstring(kBrowserHintPipeName), std::wstring(L"\\\\.\\pipe\\LastRichPresence.BrowserHints"),
+            "The browser hint pipe name must remain stable across host and app.");
+        ExpectEqual(std::wstring(kBrowserExtensionId), std::wstring(L"hodkjclfknpkaockiingkiijbbjekebj"),
+            "The native host allow-list must remain aligned with the extension ID.");
+        ExpectEqual(std::wstring(kBrowserExtensionOrigin), std::wstring(L"chrome-extension://hodkjclfknpkaockiingkiijbbjekebj/"),
+            "The browser native host manifest origin must remain stable.");
+        Expect(kMaxBrowserNativeMessageBytes == 64 * 1024,
+            "The browser native messaging payload cap should remain at 64 KiB.");
+        Expect(IsAcceptedNativeMessagingOrigin(kBrowserExtensionOrigin),
+            "The committed extension origin must remain accepted by the native host.");
+        Expect(!IsAcceptedNativeMessagingOrigin(L"chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/"),
+            "Unexpected extension origins must be rejected by the native host.");
+        Expect(IsAllowedNativeMessagingParentProcessName(L"chrome.exe"),
+            "Chrome should remain an allowed native-host parent process.");
+        Expect(IsAllowedNativeMessagingParentProcessName(L"msedge.exe"),
+            "Edge should remain an allowed native-host parent process.");
+        Expect(!IsAllowedNativeMessagingParentProcessName(L"powershell.exe"),
+            "Arbitrary local parent processes must not be trusted for browser hints.");
+    }
+
+    void TestWindowTrayVisibilityHelper()
+    {
+        using namespace lrp::ui;
+
+        Expect(IsWindowVisibleToUser(true, false, false),
+            "A shown non-iconic window should be treated as visible to the user.");
+        Expect(!IsWindowVisibleToUser(true, true, false),
+            "A minimized taskbar window should be treated as restorable, not visible.");
+        Expect(!IsWindowVisibleToUser(true, false, true),
+            "A hidden-to-tray window should not be treated as visible even if the raw window visibility flag is still set.");
+        Expect(!IsWindowVisibleToUser(false, false, false),
+            "A hidden window should not be treated as visible.");
+    }
+
+    void TestSettingsUiBinder()
+    {
+        using namespace lrp::settings;
+
+        PersistedSettings settings;
+        settings.media.showTimestamps = false;
+        settings.media.showSource = false;
+        settings.media.sourceDebugMode = true;
+        settings.media.showPaused = false;
+        settings.media.showAlbumArt = false;
+        settings.media.showDefaultIdleStatus = false;
+        settings.media.sensitiveKeywordFilter = false;
+        settings.media.strictBrowserPrivacy = true;
+        settings.media.suppressBrowserAlbumArt = true;
+        settings.media.blockedAppSiteTermsRaw = L"teams.exe;meet.google.com";
+        settings.media.activityTypeOverride = 2;
+
+        settings.behavior.closeToTrayOnClose = false;
+        settings.behavior.launchOnStartup = true;
+        settings.behavior.startMinimizedToTray = true;
+        settings.behavior.trayLeftClickToggles = false;
+        settings.behavior.themeMode = AppThemeMode::Dark;
+
+        settings.productive.enabled = false;
+        settings.productive.detectionMode = ProductiveDetectionMode::ForegroundOnly;
+        settings.productive.showProjectName = false;
+        settings.productive.activityTypeOverride = 5;
+        settings.productive.wordEnabled = false;
+        settings.productive.codexEnabled = false;
+
+        settings.creative.enabled = false;
+        settings.creative.priority = CreativePriorityMode::PreferCreative;
+        settings.creative.detectionMode = CreativeDetectionMode::VisibleWindowOnly;
+        settings.creative.showProjectName = false;
+        settings.creative.showWindowTitle = true;
+        settings.creative.activityTypeOverride = 3;
+        settings.creative.photoshopEnabled = false;
+        settings.creative.bridgeEnabled = false;
+        settings.creative.privacyMode = CreativePrivacyMode::Private;
+        settings.creative.idleBehavior = CreativeIdleBehavior::ClearImmediately;
+
+        auto musicSettings = lrp::ui::BuildMusicPageSettings(settings);
+        Expect(!musicSettings.showTimestamps, "Music UI binder should project showTimestamps.");
+        Expect(!musicSettings.showSource, "Music UI binder should project showSource.");
+        Expect(musicSettings.sourceDebugMode, "Music UI binder should project sourceDebugMode.");
+        Expect(!musicSettings.showPaused, "Music UI binder should project showPaused.");
+        Expect(!musicSettings.showAlbumArt, "Music UI binder should project showAlbumArt.");
+
+        auto shellSettings = lrp::ui::BuildSettingsPageSettings(settings);
+        Expect(!shellSettings.closeToTrayOnClose, "Settings UI binder should project close-to-tray.");
+        Expect(shellSettings.launchOnStartup, "Settings UI binder should project launch-on-startup.");
+        Expect(shellSettings.startMinimizedToTray, "Settings UI binder should project start-minimized.");
+        Expect(!shellSettings.trayLeftClickToggles, "Settings UI binder should project tray toggle behavior.");
+        Expect(!shellSettings.showDefaultIdleStatus, "Settings UI binder should project idle status.");
+        ExpectEqual(shellSettings.mediaActivityTypeIndex, 2, "Settings UI binder should map media activity type.");
+        ExpectEqual(shellSettings.creativeActivityTypeIndex, 3, "Settings UI binder should map creative activity type.");
+        ExpectEqual(shellSettings.productiveActivityTypeIndex, 4, "Settings UI binder should map productive activity type.");
+        Expect(!shellSettings.sensitiveKeywordFilter, "Settings UI binder should project keyword filter.");
+        Expect(shellSettings.strictBrowserPrivacy, "Settings UI binder should project strict browser privacy.");
+        Expect(shellSettings.suppressBrowserAlbumArt, "Settings UI binder should project browser album art suppression.");
+        ExpectEqual(std::wstring(shellSettings.blockedAppSitesRaw.c_str()), std::wstring(L"teams.exe;meet.google.com"),
+            "Settings UI binder should project blocked app/site terms.");
+        ExpectEqual(shellSettings.themeModeIndex, 1, "Settings UI binder should map dark theme mode.");
+
+        auto productiveSettings = lrp::ui::BuildProductivityPageSettings(settings);
+        Expect(!productiveSettings.enabled, "Productivity UI binder should project enable state.");
+        Expect(productiveSettings.detectionMode == ProductiveDetectionMode::ForegroundOnly,
+            "Productivity UI binder should project detection mode.");
+        Expect(!productiveSettings.showProjectName, "Productivity UI binder should project project-name toggle.");
+        Expect(!productiveSettings.wordEnabled, "Productivity UI binder should project Word filter.");
+        Expect(!productiveSettings.codexEnabled, "Productivity UI binder should project Codex filter.");
+
+        auto creativeSettings = lrp::ui::BuildCreativePageSettings(settings);
+        Expect(!creativeSettings.enabled, "Creative UI binder should project enable state.");
+        Expect(creativeSettings.priority == CreativePriorityMode::PreferCreative,
+            "Creative UI binder should project priority mode.");
+        Expect(creativeSettings.detectionMode == CreativeDetectionMode::VisibleWindowOnly,
+            "Creative UI binder should project detection mode.");
+        Expect(!creativeSettings.showProjectName, "Creative UI binder should project project-name toggle.");
+        Expect(creativeSettings.showWindowTitle, "Creative UI binder should project window-title toggle.");
+        Expect(!creativeSettings.photoshopEnabled, "Creative UI binder should project Photoshop filter.");
+        Expect(!creativeSettings.bridgeEnabled, "Creative UI binder should project Bridge filter.");
+        Expect(creativeSettings.privacyMode == CreativePrivacyMode::Private,
+            "Creative UI binder should project privacy mode.");
+        Expect(creativeSettings.idleBehavior == CreativeIdleBehavior::ClearImmediately,
+            "Creative UI binder should project idle behavior.");
+
+        PersistedSettings applied;
+        applied.media.blockedAppSiteTermsRaw = L"keep-existing";
+
+        lrp::ui::ApplyMusicPageSettings(applied, musicSettings);
+        lrp::ui::ApplySettingsPageSettings(applied, shellSettings, false);
+        lrp::ui::ApplyProductivityPageSettings(applied, productiveSettings);
+        lrp::ui::ApplyCreativePageSettings(applied, creativeSettings);
+
+        Expect(!applied.media.showTimestamps, "Music UI binder should apply showTimestamps.");
+        Expect(!applied.media.showSource, "Music UI binder should apply showSource.");
+        Expect(applied.media.sourceDebugMode, "Music UI binder should apply sourceDebugMode.");
+        Expect(!applied.media.showPaused, "Music UI binder should apply showPaused.");
+        Expect(!applied.media.showAlbumArt, "Music UI binder should apply showAlbumArt.");
+        ExpectEqual(applied.media.blockedAppSiteTermsRaw, std::wstring(L"keep-existing"),
+            "Settings UI binder should preserve blocked terms when Apply-only commit is deferred.");
+        Expect(!applied.behavior.closeToTrayOnClose, "Settings UI binder should apply close-to-tray.");
+        Expect(applied.behavior.launchOnStartup, "Settings UI binder should apply launch-on-startup.");
+        Expect(applied.behavior.startMinimizedToTray, "Settings UI binder should apply start-minimized.");
+        Expect(!applied.behavior.trayLeftClickToggles, "Settings UI binder should apply tray toggle behavior.");
+        Expect(applied.behavior.themeMode == AppThemeMode::Dark, "Settings UI binder should apply theme mode.");
+        Expect(applied.media.activityTypeOverride == 2, "Settings UI binder should apply media activity type.");
+        Expect(applied.productive.activityTypeOverride == 5, "Settings UI binder should apply productive activity type.");
+        Expect(applied.creative.activityTypeOverride == 3, "Settings UI binder should apply creative activity type.");
+        Expect(!applied.productive.enabled, "Productivity UI binder should apply enable state.");
+        Expect(!applied.productive.wordEnabled, "Productivity UI binder should apply Word filter.");
+        Expect(!applied.creative.enabled, "Creative UI binder should apply enable state.");
+        Expect(!applied.creative.photoshopEnabled, "Creative UI binder should apply Photoshop filter.");
+
+        lrp::ui::ApplySettingsPageSettings(applied, shellSettings, true);
+        ExpectEqual(applied.media.blockedAppSiteTermsRaw, std::wstring(L"teams.exe;meet.google.com"),
+            "Settings UI binder should commit blocked terms when requested.");
     }
 
     void TestActivityPresenceHelpers()
@@ -767,6 +1001,10 @@ int main()
     {
         TestTextUtilities();
         TestSettingsModels();
+        TestAppPageHelpers();
+        TestBrowserNativeMessagingContract();
+        TestWindowTrayVisibilityHelper();
+        TestSettingsUiBinder();
         TestActivityPresenceHelpers();
         TestActivityLaneCoordinator();
         TestSettingsImportAndPrecedence();

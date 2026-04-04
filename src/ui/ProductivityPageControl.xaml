@@ -1,0 +1,312 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Last_Rich_Presence.ProductivityPageControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer x:Name="ProductivityPage"
+                  VerticalScrollMode="Enabled"
+                  VerticalScrollBarVisibility="Hidden"
+                  HorizontalScrollMode="Disabled"
+                  HorizontalScrollBarVisibility="Disabled">
+        <StackPanel>
+            <StackPanel.ChildrenTransitions>
+                <TransitionCollection>
+                    <RepositionThemeTransition/>
+                </TransitionCollection>
+            </StackPanel.ChildrenTransitions>
+
+            <TextBlock Text="PRODUCTIVITY"
+                       Style="{StaticResource SectionOverlineTextStyle}"
+                       Margin="0,0,0,12"/>
+
+            <Border Style="{StaticResource SettingsCardStyle}">
+                <StackPanel Spacing="12">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="LIVE DETECTOR PREVIEW"
+                                   Style="{StaticResource SectionOverlineTextStyle}"
+                                   Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                        <Border Grid.Column="1"
+                                Padding="10,4"
+                                Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                BorderThickness="1"
+                                CornerRadius="999">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon Glyph="&#xE7C1;"
+                                          FontSize="12"
+                                          VerticalAlignment="Center"
+                                          Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                                <TextBlock Text="Native C++"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Border Width="64"
+                                Height="64"
+                                Margin="0,0,12,0"
+                                CornerRadius="12"
+                                Background="{ThemeResource LayerFillColorDefaultBrush}"
+                                BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                BorderThickness="1">
+                            <Grid>
+                                <Rectangle Margin="6"
+                                           RadiusX="8"
+                                           RadiusY="8"
+                                           Stroke="{ThemeResource TextFillColorDisabledBrush}"
+                                           StrokeThickness="1.4"
+                                           StrokeDashArray="2,2"
+                                           Fill="Transparent"
+                                           IsHitTestVisible="False"/>
+                                <Image x:Name="ProductiveDetectedAppIcon"
+                                       Visibility="Collapsed"
+                                       Stretch="UniformToFill">
+                                    <Image.Clip>
+                                        <RectangleGeometry Rect="0,0,64,64"/>
+                                    </Image.Clip>
+                                </Image>
+                                <SymbolIcon x:Name="ProductiveDetectedAppIconFallback"
+                                            Symbol="Document"
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            </Grid>
+                        </Border>
+
+                        <StackPanel Grid.Column="1"
+                                    VerticalAlignment="Center"
+                                    Spacing="4">
+                            <TextBlock x:Name="ProductiveDetectedAppText"
+                                       Text="Awaiting Productive Activity"
+                                       Style="{StaticResource CardTitleTextStyle}"
+                                       TextTrimming="CharacterEllipsis"
+                                       MaxLines="1"/>
+                            <TextBlock x:Name="ProductiveDetectedProjectText"
+                                       Text="Launch a supported Office app to update your status."
+                                       Style="{StaticResource SecondaryBodyTextStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextWrapping="WrapWholeWords"
+                                       MaxLines="2"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <Grid ColumnSpacing="10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Border Grid.Column="0"
+                                Padding="10,8"
+                                Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                BorderThickness="1"
+                                CornerRadius="10">
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="Window"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock x:Name="ProductiveDetectedWindowText"
+                                           Text="None"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           TextWrapping="WrapWholeWords"
+                                           MaxLines="2"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Column="1"
+                                Padding="10,8"
+                                Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                BorderThickness="1"
+                                CornerRadius="10">
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="Process"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock x:Name="ProductiveDetectedProcessText"
+                                           Text="None"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           TextWrapping="WrapWholeWords"
+                                           MaxLines="2"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <TextBlock x:Name="ProductiveRuntimeSummaryText"
+                               Text="Waiting for supported apps..."
+                               Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource SettingsCardStyle}">
+                <StackPanel Spacing="10">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Enable Productive RPC" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                            <TextBlock Text="Turns the Productive detector and Discord pipeline on or off."
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextWrapping="Wrap"/>
+                        </StackPanel>
+                        <ToggleSwitch Grid.Column="1" x:Name="ProductiveEnableToggle" IsOn="True"
+                                      Toggled="OnSettingsToggleChanged"
+                                      VerticalAlignment="Center"/>
+                    </Grid>
+                    <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+                    <TextBlock Text="Supported apps: Word, Excel, PowerPoint, OneNote, Access, Publisher, Visio, Project."
+                               Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+
+            <StackPanel x:Name="ProductiveSettingsControlsPanel" Spacing="12">
+                <Border Style="{StaticResource SettingsCardStyle}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="Routing &amp; detection"
+                                   Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="Detection mode"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <ComboBox x:Name="ProductiveDetectionModeCombo"
+                                      SelectedIndex="0"
+                                      SelectionChanged="OnDetectionModeSelectionChanged">
+                                <ComboBoxItem Content="Foreground preferred + visible fallback (Recommended)"/>
+                                <ComboBoxItem Content="Foreground only"/>
+                                <ComboBoxItem Content="Visible Office window only"/>
+                            </ComboBox>
+                        </StackPanel>
+
+                        <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="Show project/file name" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                                <TextBlock Text="Uses window-title heuristics for the preview (C++ only for now)."
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" x:Name="ProductiveShowProjectToggle" IsOn="True"
+                                          Toggled="OnSettingsToggleChanged"
+                                          VerticalAlignment="Center"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource SettingsCardStyle}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="Per-app enable list"
+                                   Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                        <TextBlock Text="Only enabled apps are allowed into the Productivity pipeline preview."
+                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextWrapping="Wrap"/>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Button Grid.Column="1"
+                                    Content="Select all"
+                                    Click="OnSelectAllAppsClicked"/>
+                            <Button Grid.Column="2"
+                                    Content="Deselect all"
+                                    Margin="8,0,0,0"
+                                    Click="OnDeselectAllAppsClicked"/>
+                        </Grid>
+
+                        <Grid ColumnSpacing="20" RowSpacing="6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <CheckBox Grid.Row="0" Grid.Column="0" x:Name="ProductiveAppWordCheck"
+                                      Content="Word" IsChecked="True"
+                                      Checked="OnAppFilterToggled"
+                                      Unchecked="OnAppFilterToggled"/>
+                            <CheckBox Grid.Row="0" Grid.Column="1" x:Name="ProductiveAppExcelCheck"
+                                      Content="Excel" IsChecked="True"
+                                      Checked="OnAppFilterToggled"
+                                      Unchecked="OnAppFilterToggled"/>
+                            <CheckBox Grid.Row="0" Grid.Column="2" x:Name="ProductiveAppPowerPointCheck"
+                                      Content="PowerPoint" IsChecked="True"
+                                      Checked="OnAppFilterToggled"
+                                      Unchecked="OnAppFilterToggled"/>
+
+                            <CheckBox Grid.Row="1" Grid.Column="0" x:Name="ProductiveAppOneNoteCheck"
+                                      Content="OneNote" IsChecked="True"
+                                      Checked="OnAppFilterToggled"
+                                      Unchecked="OnAppFilterToggled"/>
+                            <CheckBox Grid.Row="1" Grid.Column="1" x:Name="ProductiveAppAccessCheck"
+                                      Content="Access" IsChecked="True"
+                                      Checked="OnAppFilterToggled"
+                                      Unchecked="OnAppFilterToggled"/>
+                            <CheckBox Grid.Row="1" Grid.Column="2" x:Name="ProductiveAppPublisherCheck"
+                                      Content="Publisher" IsChecked="True"
+                                      Checked="OnAppFilterToggled"
+                                      Unchecked="OnAppFilterToggled"/>
+
+                            <CheckBox Grid.Row="2" Grid.Column="0" x:Name="ProductiveAppVisioCheck"
+                                      Content="Visio" IsChecked="True"
+                                      Checked="OnAppFilterToggled"
+                                      Unchecked="OnAppFilterToggled"/>
+                            <CheckBox Grid.Row="2" Grid.Column="1" x:Name="ProductiveAppProjectCheck"
+                                      Content="Project" IsChecked="True"
+                                      Checked="OnAppFilterToggled"
+                                      Unchecked="OnAppFilterToggled"/>
+                            <CheckBox Grid.Row="2" Grid.Column="2" x:Name="ProductiveAppCodexCheck"
+                                      Content="Codex" IsChecked="True"
+                                      Checked="OnAppFilterToggled"
+                                      Unchecked="OnAppFilterToggled"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <Border Style="{StaticResource SettingsCardStyle}">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="Future planned integration"
+                               Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                    <TextBlock Text="Planned productivity/dev tools: Visual Studio, Visual Studio Code, Qt Creator, and similar desktop apps."
+                               Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

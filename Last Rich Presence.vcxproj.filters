@@ -23,7 +23,22 @@
     <Page Include="src\ui\MainWindow.xaml">
       <Filter>src\ui</Filter>
     </Page>
+    <Page Include="src\ui\CreativePageControl.xaml">
+      <Filter>src\ui</Filter>
+    </Page>
+    <Page Include="src\ui\HomePageControl.xaml">
+      <Filter>src\ui</Filter>
+    </Page>
+    <Page Include="src\ui\MusicPageControl.xaml">
+      <Filter>src\ui</Filter>
+    </Page>
+    <Page Include="src\ui\ProductivityPageControl.xaml">
+      <Filter>src\ui</Filter>
+    </Page>
     <Page Include="src\ui\SettingsDiagnosticsPanel.xaml">
+      <Filter>src\ui</Filter>
+    </Page>
+    <Page Include="src\ui\SettingsPageControl.xaml">
       <Filter>src\ui</Filter>
     </Page>
   </ItemGroup>
@@ -31,11 +46,29 @@
     <Midl Include="src\ui\MainWindow.idl">
       <Filter>src\ui</Filter>
     </Midl>
+    <Midl Include="src\ui\CreativePageControl.idl">
+      <Filter>src\ui</Filter>
+    </Midl>
+    <Midl Include="src\ui\HomePageControl.idl">
+      <Filter>src\ui</Filter>
+    </Midl>
+    <Midl Include="src\ui\MusicPageControl.idl">
+      <Filter>src\ui</Filter>
+    </Midl>
+    <Midl Include="src\ui\ProductivityPageControl.idl">
+      <Filter>src\ui</Filter>
+    </Midl>
     <Midl Include="src\ui\SettingsDiagnosticsPanel.idl">
+      <Filter>src\ui</Filter>
+    </Midl>
+    <Midl Include="src\ui\SettingsPageControl.idl">
       <Filter>src\ui</Filter>
     </Midl>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\core\BrowserNativeMessaging.cpp">
+      <Filter>src\core</Filter>
+    </ClCompile>
     <ClCompile Include="src\core\pch.cpp">
       <Filter>src\core</Filter>
     </ClCompile>
@@ -61,10 +94,28 @@
     <ClCompile Include="src\ui\App.xaml.cpp">
       <Filter>src\ui</Filter>
     </ClCompile>
+    <ClCompile Include="src\ui\CreativePageControl.xaml.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\HomePageControl.xaml.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\MainWindow.Init.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
     <ClCompile Include="src\ui\MainWindow.xaml.cpp">
       <Filter>src\ui</Filter>
     </ClCompile>
+    <ClCompile Include="src\ui\MusicPageControl.xaml.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\ProductivityPageControl.xaml.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
     <ClCompile Include="src\ui\SettingsDiagnosticsPanel.xaml.cpp">
+      <Filter>src\ui</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ui\SettingsPageControl.xaml.cpp">
       <Filter>src\ui</Filter>
     </ClCompile>
     <ClCompile Include="src\core\PresenceManager.cpp">
@@ -78,6 +129,9 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\core\BrowserNativeMessaging.h">
+      <Filter>src\core</Filter>
+    </ClInclude>
     <ClInclude Include="src\core\ActivityPresenceHelpers.h">
       <Filter>src\core</Filter>
     </ClInclude>
@@ -102,10 +156,31 @@
     <ClInclude Include="src\ui\App.xaml.h">
       <Filter>src\ui</Filter>
     </ClInclude>
+    <ClInclude Include="src\ui\AppPage.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\CreativePageControl.xaml.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\HomePageControl.xaml.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
     <ClInclude Include="src\ui\MainWindow.xaml.h">
       <Filter>src\ui</Filter>
     </ClInclude>
+    <ClInclude Include="src\ui\MusicPageControl.xaml.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\PageModels.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\ProductivityPageControl.xaml.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
     <ClInclude Include="src\ui\SettingsDiagnosticsPanel.xaml.h">
+      <Filter>src\ui</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ui\SettingsPageControl.xaml.h">
       <Filter>src\ui</Filter>
     </ClInclude>
     <ClInclude Include="src\core\DiagnosticsLog.h">
@@ -156,9 +231,6 @@
       <Filter>Assets</Filter>
     </Image>
     <Image Include="Assets\logo.ico" />
-  </ItemGroup>
-  <ItemGroup>
-    <Text Include="readme.txt" />
   </ItemGroup>
   <ItemGroup>
     <Manifest Include="app.manifest" />

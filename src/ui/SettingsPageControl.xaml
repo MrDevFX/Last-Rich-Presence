@@ -1,0 +1,341 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Last_Rich_Presence.SettingsPageControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Last_Rich_Presence">
+
+    <ScrollViewer x:Name="SettingsPage"
+                  VerticalScrollMode="Enabled"
+                  VerticalScrollBarVisibility="Hidden"
+                  HorizontalScrollMode="Disabled"
+                  HorizontalScrollBarVisibility="Disabled">
+        <StackPanel>
+            <StackPanel.ChildrenTransitions>
+                <TransitionCollection>
+                    <RepositionThemeTransition/>
+                </TransitionCollection>
+            </StackPanel.ChildrenTransitions>
+
+            <TextBlock Text="APP BEHAVIOR" Style="{StaticResource SectionOverlineTextStyle}"
+                       Margin="0,0,0,12"/>
+
+            <Border Style="{StaticResource SettingsCardStyle}">
+                <StackPanel Spacing="10">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Close button minimizes to tray" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                            <TextBlock Text="If off, clicking X fully exits the app"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+                        <ToggleSwitch Grid.Column="1" x:Name="CloseToTrayToggle" IsOn="True"
+                                      Toggled="OnSettingsToggleChanged"
+                                      VerticalAlignment="Center"/>
+                    </Grid>
+
+                    <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Launch on Windows startup" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                            <TextBlock Text="Automatically start Last Rich Presence when you sign in"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+                        <ToggleSwitch Grid.Column="1" x:Name="LaunchOnStartupToggle" IsOn="False"
+                                      Toggled="OnSettingsToggleChanged"
+                                      VerticalAlignment="Center"/>
+                    </Grid>
+
+                    <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Start minimized to tray" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                            <TextBlock Text="Launch in background and keep window hidden"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+                        <ToggleSwitch Grid.Column="1" x:Name="StartMinimizedToggle" IsOn="False"
+                                      Toggled="OnSettingsToggleChanged"
+                                      VerticalAlignment="Center"/>
+                    </Grid>
+
+                    <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Tray left-click toggles window" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                            <TextBlock Text="If off, left-click only restores the app"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+                        <ToggleSwitch Grid.Column="1" x:Name="TrayLeftClickToggle" IsOn="True"
+                                      Toggled="OnSettingsToggleChanged"
+                                      VerticalAlignment="Center"/>
+                    </Grid>
+
+                    <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Show Default Idle Status" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                            <TextBlock Text="When idle, show: &quot;Playing Last Rich Presence - Waiting for media or activity&quot;"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+                        <ToggleSwitch Grid.Column="1" x:Name="DefaultIdleStatusToggle" IsOn="True"
+                                      Toggled="OnSettingsToggleChanged"
+                                      VerticalAlignment="Center"/>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <TextBlock Text="DISCORD ACTIVITY TYPES" Style="{StaticResource SectionOverlineTextStyle}"
+                       Margin="0,16,0,12"/>
+
+            <Border Style="{StaticResource SettingsCardStyle}">
+                <StackPanel Spacing="10">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Media activity type" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                            <TextBlock Text="Controls how Music/Media appears on Discord"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+                        <ComboBox Grid.Column="1"
+                                  x:Name="MediaActivityTypeCombo"
+                                  MinWidth="220"
+                                  SelectedIndex="0"
+                                  SelectionChanged="OnSettingsSelectionChanged"
+                                  VerticalAlignment="Center">
+                            <ComboBoxItem Content="Auto (Default)"/>
+                            <ComboBoxItem Content="Playing (0)"/>
+                            <ComboBoxItem Content="Listening (2)"/>
+                            <ComboBoxItem Content="Watching (3)"/>
+                            <ComboBoxItem Content="Competing (5)"/>
+                        </ComboBox>
+                    </Grid>
+
+                    <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Creativity activity type" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                            <TextBlock Text="Controls how Creativity appears on Discord"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+                        <ComboBox Grid.Column="1"
+                                  x:Name="CreativeActivityTypeCombo"
+                                  MinWidth="220"
+                                  SelectedIndex="0"
+                                  SelectionChanged="OnSettingsSelectionChanged"
+                                  VerticalAlignment="Center">
+                            <ComboBoxItem Content="Auto (Default)"/>
+                            <ComboBoxItem Content="Playing (0)"/>
+                            <ComboBoxItem Content="Listening (2)"/>
+                            <ComboBoxItem Content="Watching (3)"/>
+                            <ComboBoxItem Content="Competing (5)"/>
+                        </ComboBox>
+                    </Grid>
+
+                    <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Productive activity type" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                            <TextBlock Text="Controls how Productive apps appear on Discord"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+                        <ComboBox Grid.Column="1"
+                                  x:Name="ProductiveActivityTypeCombo"
+                                  MinWidth="220"
+                                  SelectedIndex="0"
+                                  SelectionChanged="OnSettingsSelectionChanged"
+                                  VerticalAlignment="Center">
+                            <ComboBoxItem Content="Auto (Default)"/>
+                            <ComboBoxItem Content="Playing (0)"/>
+                            <ComboBoxItem Content="Listening (2)"/>
+                            <ComboBoxItem Content="Watching (3)"/>
+                            <ComboBoxItem Content="Competing (5)"/>
+                        </ComboBox>
+                    </Grid>
+
+                    <TextBlock Text="Supported values in this app: 0, 2, 3, 5"
+                               Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                </StackPanel>
+            </Border>
+
+            <TextBlock Text="PRIVACY &amp; SAFETY" Style="{StaticResource SectionOverlineTextStyle}"
+                       Margin="0,16,0,12"/>
+
+            <Border Style="{StaticResource SettingsCardStyle}">
+                <StackPanel Spacing="10">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Sensitive keyword filter" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                            <TextBlock Text="Hide known adult/NSFW content from Discord"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+                        <ToggleSwitch Grid.Column="1" x:Name="SensitiveFilterToggle" IsOn="True"
+                                      Toggled="OnSettingsToggleChanged"
+                                      VerticalAlignment="Center"/>
+                    </Grid>
+
+                    <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Strict unknown-browser privacy" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                            <TextBlock Text="Treat unknown browser sessions as private media"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+                        <ToggleSwitch Grid.Column="1" x:Name="StrictBrowserPrivacyToggle" IsOn="False"
+                                      Toggled="OnSettingsToggleChanged"
+                                      VerticalAlignment="Center"/>
+                    </Grid>
+
+                    <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Suppress browser album art" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                            <TextBlock Text="Avoid art uploads for browser-detected sessions"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+                        <ToggleSwitch Grid.Column="1" x:Name="SuppressBrowserArtToggle" IsOn="False"
+                                      Toggled="OnSettingsToggleChanged"
+                                      VerticalAlignment="Center"/>
+                    </Grid>
+
+                    <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="Blocked apps/sites list" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                        <TextBlock Text="Comma, semicolon, or newline separated terms (e.g. chrome.exe, youtube.com). Any match is hidden as private media."
+                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextWrapping="Wrap"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="BlockedAppSitesBox"
+                                     AcceptsReturn="True"
+                                     TextWrapping="Wrap"
+                                     MinHeight="74"
+                                     TextChanged="OnBlockedTermsTextChanged"
+                                     PlaceholderText="spotify.exe, youtube.com, twitch"/>
+                            <Button Grid.Column="1" Content="Apply"
+                                    Margin="8,0,0,0"
+                                    VerticalAlignment="Bottom"
+                                    Click="OnApplyBlockedTermsClicked"/>
+                        </Grid>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <TextBlock Text="SETTINGS UX" Style="{StaticResource SectionOverlineTextStyle}"
+                       Margin="0,16,0,12"/>
+
+            <Border Style="{StaticResource SettingsCardStyle}">
+                <StackPanel Spacing="8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Appearance" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                            <TextBlock Text="Choose Light, Dark, or follow the system theme"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+                        <ComboBox Grid.Column="1"
+                                  x:Name="ThemeModeCombo"
+                                  MinWidth="220"
+                                  SelectedIndex="2"
+                                  SelectionChanged="OnSettingsSelectionChanged"
+                                  VerticalAlignment="Center">
+                            <ComboBoxItem Content="Light Mode"/>
+                            <ComboBoxItem Content="Dark Mode"/>
+                            <ComboBoxItem Content="Follow System Default"/>
+                        </ComboBox>
+                    </Grid>
+
+                    <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Button Grid.Column="0" Content="Reset to Defaults" Click="OnResetSettingsClicked"/>
+                        <Button Grid.Column="1" Content="Export Settings" Margin="8,0,0,0"
+                                Click="OnExportSettingsClicked"/>
+                        <Button Grid.Column="2" Content="Import Settings" Margin="8,0,0,0"
+                                Click="OnImportSettingsClicked"/>
+                    </Grid>
+                    <TextBlock Text="Export/Import uses settings-export.json in the app local data folder."
+                               Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                </StackPanel>
+            </Border>
+
+            <local:SettingsDiagnosticsPanel x:Name="SettingsDiagnosticsPanelHost"/>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

@@ -1,0 +1,426 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Last_Rich_Presence.CreativePageControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <ScrollViewer x:Name="CreativePage"
+                  VerticalScrollMode="Enabled"
+                  VerticalScrollBarVisibility="Hidden"
+                  HorizontalScrollMode="Disabled"
+                  HorizontalScrollBarVisibility="Disabled">
+        <StackPanel>
+            <StackPanel.ChildrenTransitions>
+                <TransitionCollection>
+                    <RepositionThemeTransition/>
+                </TransitionCollection>
+            </StackPanel.ChildrenTransitions>
+
+            <TextBlock Text="CREATIVITY"
+                       Style="{StaticResource SectionOverlineTextStyle}"
+                       Margin="0,0,0,12"/>
+
+            <Border Style="{StaticResource SettingsCardStyle}" Padding="18">
+                <StackPanel Spacing="12">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="LIVE DETECTOR PREVIEW"
+                                   Style="{StaticResource SectionOverlineTextStyle}"
+                                   Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                        <Border Grid.Column="1"
+                                Padding="10,4"
+                                Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                BorderThickness="1"
+                                CornerRadius="999">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon Glyph="&#xE7C1;"
+                                          FontSize="12"
+                                          VerticalAlignment="Center"
+                                          Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                                <TextBlock Text="Native C++"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Border Width="64"
+                                Height="64"
+                                Margin="0,0,12,0"
+                                CornerRadius="12"
+                                Background="{ThemeResource LayerFillColorDefaultBrush}"
+                                BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                BorderThickness="1">
+                            <Grid>
+                                <Rectangle Margin="6"
+                                           RadiusX="8"
+                                           RadiusY="8"
+                                           Stroke="{ThemeResource TextFillColorDisabledBrush}"
+                                           StrokeThickness="1.4"
+                                           StrokeDashArray="2,2"
+                                           Fill="Transparent"
+                                           IsHitTestVisible="False"/>
+                                <Image x:Name="CreativeDetectedAppIcon"
+                                       Visibility="Collapsed"
+                                       Stretch="UniformToFill">
+                                    <Image.Clip>
+                                        <RectangleGeometry Rect="0,0,64,64"/>
+                                    </Image.Clip>
+                                </Image>
+                                <SymbolIcon x:Name="CreativeDetectedAppIconFallback"
+                                            Symbol="Edit"
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
+                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            </Grid>
+                        </Border>
+
+                        <StackPanel Grid.Column="1"
+                                    VerticalAlignment="Center"
+                                    Spacing="4">
+                            <TextBlock x:Name="CreativeDetectedAppText"
+                                       Text="None"
+                                       Style="{StaticResource CardTitleTextStyle}"
+                                       TextTrimming="CharacterEllipsis"
+                                       MaxLines="1"/>
+                            <TextBlock x:Name="CreativeDetectedProjectText"
+                                       Text="Launch a supported app to update your status."
+                                       Style="{StaticResource SecondaryBodyTextStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextWrapping="WrapWholeWords"
+                                       MaxLines="2"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <Grid ColumnSpacing="10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Border Grid.Column="0"
+                                Padding="10,8"
+                                Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                BorderThickness="1"
+                                CornerRadius="10">
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="Window"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock x:Name="CreativeDetectedWindowText"
+                                           Text="None"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           TextWrapping="WrapWholeWords"
+                                           MaxLines="2"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Column="1"
+                                Padding="10,8"
+                                Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                BorderThickness="1"
+                                CornerRadius="10">
+                            <StackPanel Spacing="2">
+                                <TextBlock Text="Process"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock x:Name="CreativeDetectedProcessText"
+                                           Text="None"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           TextWrapping="WrapWholeWords"
+                                           MaxLines="2"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource SettingsCardStyle}">
+                <StackPanel Spacing="10">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Enable Creativity RPC" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                            <TextBlock Text="Turns the Creativity detector/pipeline on or off without touching your media/browser pipeline."
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       TextWrapping="Wrap"/>
+                        </StackPanel>
+                        <ToggleSwitch Grid.Column="1" x:Name="CreativeEnableToggle" IsOn="True"
+                                      Toggled="OnSettingsToggleChanged"
+                                      VerticalAlignment="Center"/>
+                    </Grid>
+
+                    <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+
+                    <StackPanel Spacing="4">
+                        <TextBlock x:Name="CreativeMvpHeadlineText" Text="Creativity RPC (MVP detector idle)"
+                                   Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                        <TextBlock x:Name="CreativeMvpSummaryText"
+                                   Text="C++ Adobe app/window detection is running separately as a clean MVP foundation. Foreground Adobe is preferred, with fallback detection for visible Adobe windows."
+                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextWrapping="Wrap"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <StackPanel x:Name="CreativeSettingsControlsPanel" Spacing="12">
+                <Border Style="{StaticResource SettingsCardStyle}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="Routing &amp; detection"
+                                   Style="{StaticResource BodyStrongTextBlockStyle}"/>
+
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="Creativity priority"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <ComboBox x:Name="CreativePriorityCombo"
+                                      SelectedIndex="0"
+                                      SelectionChanged="OnSettingsSelectionChanged">
+                                <ComboBoxItem Content="Auto (Recommended)"/>
+                                <ComboBoxItem Content="Prefer Media"/>
+                                <ComboBoxItem Content="Prefer Creativity"/>
+                            </ComboBox>
+                        </StackPanel>
+
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="Detection mode"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <ComboBox x:Name="CreativeDetectionModeCombo"
+                                      SelectedIndex="0"
+                                      SelectionChanged="OnSettingsSelectionChanged">
+                                <ComboBoxItem Content="Foreground preferred + visible fallback (Recommended)"/>
+                                <ComboBoxItem Content="Foreground only"/>
+                                <ComboBoxItem Content="Visible Adobe window only"/>
+                            </ComboBox>
+                        </StackPanel>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="Show project/file name" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                                <TextBlock Text="Uses window-title heuristics for the preview (C++ only for now)."
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" x:Name="CreativeShowProjectToggle" IsOn="True"
+                                          Toggled="OnSettingsToggleChanged"
+                                          VerticalAlignment="Center"/>
+                        </Grid>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="Show window title (debug-style)" Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                                <TextBlock Text="Useful for tuning heuristics later; hidden by default."
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="1" x:Name="CreativeShowWindowTitleToggle" IsOn="False"
+                                          Toggled="OnSettingsToggleChanged"
+                                          VerticalAlignment="Center"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource SettingsCardStyle}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="Per-app enable list"
+                                   Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                        <TextBlock Text="Only enabled apps are allowed into the Creativity pipeline preview."
+                                   Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextWrapping="Wrap"/>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Button Grid.Column="1"
+                                    Content="Select all"
+                                    Click="OnSelectAllClicked"/>
+                            <Button Grid.Column="2"
+                                    Content="Deselect all"
+                                    Margin="8,0,0,0"
+                                    Click="OnDeselectAllClicked"/>
+                        </Grid>
+
+                        <Grid ColumnSpacing="20" RowSpacing="6">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <CheckBox Grid.Row="0" Grid.Column="0" x:Name="CreativeAppPhotoshopCheck"
+                                      Content="Photoshop" IsChecked="True"
+                                      Checked="OnAppFilterCheckChanged"
+                                      Unchecked="OnAppFilterCheckChanged"/>
+                            <CheckBox Grid.Row="0" Grid.Column="1" x:Name="CreativeAppIllustratorCheck"
+                                      Content="Illustrator" IsChecked="True"
+                                      Checked="OnAppFilterCheckChanged"
+                                      Unchecked="OnAppFilterCheckChanged"/>
+                            <CheckBox Grid.Row="0" Grid.Column="2" x:Name="CreativeAppPremiereCheck"
+                                      Content="Premiere Pro" IsChecked="True"
+                                      Checked="OnAppFilterCheckChanged"
+                                      Unchecked="OnAppFilterCheckChanged"/>
+
+                            <CheckBox Grid.Row="1" Grid.Column="0" x:Name="CreativeAppAfterEffectsCheck"
+                                      Content="After Effects" IsChecked="True"
+                                      Checked="OnAppFilterCheckChanged"
+                                      Unchecked="OnAppFilterCheckChanged"/>
+                            <CheckBox Grid.Row="1" Grid.Column="1" x:Name="CreativeAppInDesignCheck"
+                                      Content="InDesign" IsChecked="True"
+                                      Checked="OnAppFilterCheckChanged"
+                                      Unchecked="OnAppFilterCheckChanged"/>
+                            <CheckBox Grid.Row="1" Grid.Column="2" x:Name="CreativeAppAuditionCheck"
+                                      Content="Audition" IsChecked="True"
+                                      Checked="OnAppFilterCheckChanged"
+                                      Unchecked="OnAppFilterCheckChanged"/>
+
+                            <CheckBox Grid.Row="2" Grid.Column="0" x:Name="CreativeAppMediaEncoderCheck"
+                                      Content="Media Encoder" IsChecked="True"
+                                      Checked="OnAppFilterCheckChanged"
+                                      Unchecked="OnAppFilterCheckChanged"/>
+                            <CheckBox Grid.Row="2" Grid.Column="1" x:Name="CreativeAppLightroomCheck"
+                                      Content="Lightroom" IsChecked="True"
+                                      Checked="OnAppFilterCheckChanged"
+                                      Unchecked="OnAppFilterCheckChanged"/>
+                            <CheckBox Grid.Row="2" Grid.Column="2" x:Name="CreativeAppLightroomClassicCheck"
+                                      Content="Lightroom Classic" IsChecked="True"
+                                      Checked="OnAppFilterCheckChanged"
+                                      Unchecked="OnAppFilterCheckChanged"/>
+
+                            <CheckBox Grid.Row="3" Grid.Column="0" x:Name="CreativeAppInCopyCheck"
+                                      Content="InCopy" IsChecked="True"
+                                      Checked="OnAppFilterCheckChanged"
+                                      Unchecked="OnAppFilterCheckChanged"/>
+                            <CheckBox Grid.Row="3" Grid.Column="1" x:Name="CreativeAppDreamweaverCheck"
+                                      Content="Dreamweaver" IsChecked="True"
+                                      Checked="OnAppFilterCheckChanged"
+                                      Unchecked="OnAppFilterCheckChanged"/>
+                            <CheckBox Grid.Row="3" Grid.Column="2" x:Name="CreativeAppAnimateCheck"
+                                      Content="Animate" IsChecked="True"
+                                      Checked="OnAppFilterCheckChanged"
+                                      Unchecked="OnAppFilterCheckChanged"/>
+
+                            <CheckBox Grid.Row="4" Grid.Column="0" x:Name="CreativeAppXdCheck"
+                                      Content="XD" IsChecked="True"
+                                      Checked="OnAppFilterCheckChanged"
+                                      Unchecked="OnAppFilterCheckChanged"/>
+                            <CheckBox Grid.Row="4" Grid.Column="1" x:Name="CreativeAppBridgeCheck"
+                                      Content="Bridge" IsChecked="True"
+                                      Checked="OnAppFilterCheckChanged"
+                                      Unchecked="OnAppFilterCheckChanged"/>
+                            <CheckBox Grid.Row="4" Grid.Column="2" x:Name="CreativeAppCharacterAnimatorCheck"
+                                      Content="Character Animator" IsChecked="True"
+                                      Checked="OnAppFilterCheckChanged"
+                                      Unchecked="OnAppFilterCheckChanged"/>
+
+                            <CheckBox Grid.Row="5" Grid.Column="0" x:Name="CreativeAppFrescoCheck"
+                                      Content="Fresco" IsChecked="True"
+                                      Checked="OnAppFilterCheckChanged"
+                                      Unchecked="OnAppFilterCheckChanged"/>
+                            <CheckBox Grid.Row="5" Grid.Column="1" x:Name="CreativeAppDimensionCheck"
+                                      Content="Dimension" IsChecked="True"
+                                      Checked="OnAppFilterCheckChanged"
+                                      Unchecked="OnAppFilterCheckChanged"/>
+                            <CheckBox Grid.Row="5" Grid.Column="2" x:Name="CreativeAppSubstanceCheck"
+                                      Content="Substance 3D apps" IsChecked="True"
+                                      Checked="OnAppFilterCheckChanged"
+                                      Unchecked="OnAppFilterCheckChanged"/>
+
+                            <CheckBox Grid.Row="6" Grid.Column="0" x:Name="CreativeAppAcrobatCheck"
+                                      Content="Acrobat" IsChecked="True"
+                                      Checked="OnAppFilterCheckChanged"
+                                      Unchecked="OnAppFilterCheckChanged"/>
+                            <CheckBox Grid.Row="6" Grid.Column="1" x:Name="CreativeAppOtherAdobeCheck"
+                                      Content="Other Adobe apps" IsChecked="True"
+                                      Checked="OnAppFilterCheckChanged"
+                                      Unchecked="OnAppFilterCheckChanged"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource SettingsCardStyle}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="Privacy &amp; idle behavior"
+                                   Style="{StaticResource BodyStrongTextBlockStyle}"/>
+
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="Privacy mode"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <ComboBox x:Name="CreativePrivacyCombo"
+                                      SelectedIndex="0"
+                                      SelectionChanged="OnSettingsSelectionChanged">
+                                <ComboBoxItem Content="Normal"/>
+                                <ComboBoxItem Content="App only"/>
+                                <ComboBoxItem Content="Private"/>
+                            </ComboBox>
+                        </StackPanel>
+
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="Idle behavior"
+                                       Style="{StaticResource CaptionTextBlockStyle}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <ComboBox x:Name="CreativeIdleBehaviorCombo"
+                                      SelectedIndex="0"
+                                      SelectionChanged="OnSettingsSelectionChanged">
+                                <ComboBoxItem Content="Hold last creativity activity (5s)"/>
+                                <ComboBoxItem Content="Clear immediately"/>
+                            </ComboBox>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <Border Style="{StaticResource SettingsCardStyle}">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="Future planned integration"
+                               Style="{StaticResource BodyStrongTextBlockStyle}"/>
+                    <TextBlock Text="Planned non-Adobe creator tools: Blender, Autodesk Maya, Figma, and similar creative apps."
+                               Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "App.xaml.h"
+#include "BrowserNativeMessaging.h"
 #include "MainWindow.xaml.h"
 
 #include <microsoft.ui.xaml.window.h>
@@ -61,6 +62,37 @@ namespace
         return requested;
     }
 
+    bool HasBrowserNativeHostActivationArgument(std::wstring arguments)
+    {
+        if (arguments.empty())
+            return false;
+
+        std::wstring syntheticCommandLine = L"LastRichPresence.exe ";
+        syntheticCommandLine += arguments;
+
+        int argCount = 0;
+        auto argv = CommandLineToArgvW(syntheticCommandLine.c_str(), &argCount);
+        if (!argv)
+            return false;
+
+        bool requested = false;
+        for (int index = 1; index < argCount; ++index)
+        {
+            auto arg = ToLowerTrimmed(argv[index]);
+            if (arg == lrp::browser::kBrowserNativeHostArgument ||
+                arg == L"/browser-native-host" ||
+                arg.rfind(L"chrome-extension://", 0) == 0 ||
+                arg.rfind(L"edge-extension://", 0) == 0)
+            {
+                requested = true;
+                break;
+            }
+        }
+
+        LocalFree(argv);
+        return requested;
+    }
+
     bool IsStartMinimizedArgumentPresent()
     {
         int argCount = 0;
@@ -98,14 +130,24 @@ namespace
         case ExtendedActivationKind::Launch:
         {
             if (auto launchArgs = activationArgs.Data().try_as<Windows::ApplicationModel::Activation::ILaunchActivatedEventArgs>())
-                return !HasStartMinimizedArgument(launchArgs.Arguments().c_str());
+            {
+                auto arguments = std::wstring(launchArgs.Arguments().c_str());
+                return
+                    !HasStartMinimizedArgument(arguments) &&
+                    !HasBrowserNativeHostActivationArgument(arguments);
+            }
             return true;
         }
 
         case ExtendedActivationKind::CommandLineLaunch:
         {
             if (auto commandLineArgs = activationArgs.Data().try_as<Windows::ApplicationModel::Activation::ICommandLineActivatedEventArgs>())
-                return !HasStartMinimizedArgument(commandLineArgs.Operation().Arguments().c_str());
+            {
+                auto arguments = std::wstring(commandLineArgs.Operation().Arguments().c_str());
+                return
+                    !HasStartMinimizedArgument(arguments) &&
+                    !HasBrowserNativeHostActivationArgument(arguments);
+            }
             return true;
         }
 
@@ -240,6 +282,19 @@ namespace winrt::Last_Rich_Presence::implementation
 
     void App::OnLaunched([[maybe_unused]] LaunchActivatedEventArgs const& e)
     {
+        if (lrp::browser::IsBrowserNativeHostLaunch())
+        {
+            auto exitCode = lrp::browser::RunBrowserNativeHostFromCurrentProcess();
+            ::ExitProcess(exitCode > 0 ? static_cast<UINT>(exitCode) : 0u);
+        }
+
+        std::wstring registrationError;
+        if (!lrp::browser::RefreshNativeHostRegistration(&registrationError) && !registrationError.empty())
+        {
+            auto message = L"Browser native host registration refresh failed: " + registrationError + L"\n";
+            OutputDebugStringW(message.c_str());
+        }
+
         m_dispatcherQueue = Microsoft::UI::Dispatching::DispatcherQueue::GetForCurrentThread();
 
         auto activationArgs = Microsoft::Windows::AppLifecycle::AppInstance::GetCurrent().GetActivatedEventArgs();

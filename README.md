@@ -34,7 +34,7 @@ The app is single-instance, supports tray-first workflows, can start minimized t
 - Separate Creativity and Productivity Discord pipelines with dedicated app IDs, allowing them to coexist with media activity as separate Discord cards.
 - Tray integration for show/hide, global Rich Presence enable or disable, and exit.
 - Persisted settings for startup behavior, privacy controls, per-app filters, theme, activity type overrides, and diagnostics export/import.
-- Optional Chromium MV3 companion extension for supported web players.
+- Optional Chromium MV3 companion extension for supported web players, with a lightweight popup for toggling hints and site sources.
 
 ## Activity Lanes
 
@@ -118,10 +118,25 @@ Also supported:
 ```powershell
 .\scripts\verify.ps1 -Configuration Release -Platform x64
 .\scripts\verify.ps1 -Configuration Release-Inno -Platform x64
+```
+
+The verification script restores NuGet packages, builds the solution, runs browser-extension JavaScript syntax checks, executes the native guard tests when the test binary is available, validates release artifacts for `Release-Inno` and `Release-MSIX`, and performs launch smoke unless you opt out.
+
+For non-interactive CI runners, use:
+
+```powershell
+.\scripts\verify.ps1 -Configuration Debug -Platform x64 -SkipLaunchSmoke
+```
+
+That mode is intended for build-and-test automation only. The GitHub Actions matrix keeps full interactive smoke on the `Debug` lane and runs the other configurations with `-SkipLaunchSmoke`. The smoke lane is pinned to a self-hosted runner labeled `interactive-desktop` so UI launch checks do not land on a service-only Windows session.
+
+Packaged local smoke is now part of the MSIX verify path:
+
+```powershell
 .\scripts\verify.ps1 -Configuration Release-MSIX -Platform x64
 ```
 
-The verification script builds the solution, runs browser-extension JavaScript syntax checks, and executes the native guard tests when the test binary is available.
+That run installs the freshly built package, launches it by packaged identity, verifies the top-level window, checks second-launch restore if startup is hidden, uninstalls the smoke-test package during cleanup, and removes any dev-certificate trust entries that the smoke run added for the current user.
 
 ## Browser Extension Setup
 
@@ -129,8 +144,11 @@ The verification script builds the solution, runs browser-extension JavaScript s
 2. Enable **Developer mode**.
 3. Click **Load unpacked**.
 4. Select the `browser-extension/` folder.
+5. Click the extension icon to open the companion popup, then choose whether hints are enabled and which supported sites can send them.
+6. Launch the desktop app once after install or update so it can refresh the per-user native-host registration.
+7. Keep the committed extension `key` stable unless you also update the app-side native-host allow-list, because native messaging is bound to the fixed extension ID.
 
-The extension communicates with the desktop app through a local token-protected bridge on `127.0.0.1` / `localhost`.
+The extension communicates with the desktop app through Chromium native messaging using the per-user host name `com.lastprojects.lastrichpresence`. The native host forwards each hint into the running app over a local named pipe, and the extension does not auto-launch the app if it is closed.
 
 ## Release Packaging
 
@@ -145,7 +163,7 @@ Typical release outputs:
 
 ## Privacy and Network Notes
 
-- The optional browser extension sends local playback hints to the desktop app over `localhost`.
+- The optional browser extension sends local playback hints to the desktop app through native messaging and a local named-pipe hop inside the app process.
 - Media album-art fallback may issue outbound requests to `itunes.apple.com`.
 - If direct album art is unavailable and a thumbnail is available, the app can upload image bytes to Imgur for a fallback asset URL.
 - If you do not want browser album-art behavior, use the in-app browser privacy and album-art settings.
@@ -154,8 +172,10 @@ Typical release outputs:
 
 - Automated coverage is currently limited to the native guard-test project in [tests/RefactorGuardTests](tests/RefactorGuardTests).
 - There is no broad UI or end-to-end automation yet.
+- A baseline GitHub Actions workflow is included in [.github/workflows/verify.yml](.github/workflows/verify.yml) and is designed for provisioned self-hosted Windows runners with the project toolchain installed. The `Debug` smoke lane additionally requires an `interactive-desktop` runner label.
 - Current builds may emit duplicate `WindowsAppRuntimeAutoInitializer` warnings; these are known build warnings.
 - Curated fallback app logos are bundled in `Assets\CreativeLogos` and `Assets\ProductiveLogos`.
+- Contributor workflow and repository standards are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Project Structure
 

@@ -3,10 +3,13 @@
   "name": "Last Rich Presence Companion",
   "version": "0.1.0",
   "description": "Optional browser hint provider for Last Rich Presence.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqfOZDoFadKnmM33xhtJZsdaUbbnx+LMVYUISDIgJNNLiqC9FmMldfgi8YGEQWEoXVRUzkep3bIwAJe06U7UVXM+8BaOBqPYmYlAwhjUqfjl7FQvtn7/2NWvCbt4M6N/+1VL97eX6cEMn0m2CvhZOeZblsyJ3dEcDbRxsnJOwZ3CyBxLGeFiIfe5kMIY7pEL+7nVgcd6aucihSgn8dbPgFdi8uz43JPS3+0SVUGoIxzM0pLUcfcRoVZHeXIV6FjtnlAQRj4unoPI6nUNeRWFOiBn6AFOgRVMuaNj2hBUKjiopDUzn/BZuzd/W5aZBd26oHdIx5+ZzRGvCCPDFvUb1WQIDAQAB",
   "permissions": [
+    "alarms",
     "tabs",
     "storage",
-    "scripting"
+    "scripting",
+    "nativeMessaging"
   ],
   "host_permissions": [
     "*://youtube.com/*",
@@ -44,9 +47,7 @@
     "*://www.mixcloud.com/*",
     "*://twitch.tv/*",
     "*://www.twitch.tv/*",
-    "*://player.twitch.tv/*",
-    "http://127.0.0.1/*",
-    "http://localhost/*"
+    "*://player.twitch.tv/*"
   ],
   "icons": {
     "16": "icons/icon-16.png",

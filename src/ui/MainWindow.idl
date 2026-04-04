@@ -6,11 +6,6 @@ namespace Last_Rich_Presence
         MainWindow();
         void InitWindow();
         void HandleRedirectedActivation();
-        void OnEnableToggled(Object sender, Microsoft.UI.Xaml.RoutedEventArgs e);
         void OnNavSelectionChanged(Microsoft.UI.Xaml.Controls.NavigationView sender, Microsoft.UI.Xaml.Controls.NavigationViewSelectionChangedEventArgs args);
-        void OnTimestampToggled(Object sender, Microsoft.UI.Xaml.RoutedEventArgs e);
-        void OnSourceToggled(Object sender, Microsoft.UI.Xaml.RoutedEventArgs e);
-        void OnPausedToggled(Object sender, Microsoft.UI.Xaml.RoutedEventArgs e);
-        void OnAlbumArtToggled(Object sender, Microsoft.UI.Xaml.RoutedEventArgs e);
     }
 }

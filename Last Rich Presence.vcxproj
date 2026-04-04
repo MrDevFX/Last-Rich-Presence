@@ -135,6 +135,9 @@
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <PrecompiledHeaderOutputFile>$(IntDir)pch.pch</PrecompiledHeaderOutputFile>
       <WarningLevel>Level4</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <SDLCheck>true</SDLCheck>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <AdditionalOptions>%(AdditionalOptions) /bigobj</AdditionalOptions>
       <AdditionalIncludeDirectories>src\core;src\ui;$(GeneratedFilesDir)src\ui;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
@@ -184,6 +187,7 @@
     <ResourceCompile Include="app_icon.rc" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\core\BrowserNativeMessaging.h" />
     <ClInclude Include="src\core\ActivityLaneCoordinator.h" />
     <ClInclude Include="src\core\ActivityPresenceHelpers.h" />
     <ClInclude Include="src\core\AppEnums.h" />
@@ -201,11 +205,28 @@
     <ClInclude Include="src\ui\App.xaml.h">
       <DependentUpon>src\ui\App.xaml</DependentUpon>
     </ClInclude>
+    <ClInclude Include="src\ui\AppPage.h" />
+    <ClInclude Include="src\ui\CreativePageControl.xaml.h">
+      <DependentUpon>src\ui\CreativePageControl.xaml</DependentUpon>
+    </ClInclude>
+    <ClInclude Include="src\ui\HomePageControl.xaml.h">
+      <DependentUpon>src\ui\HomePageControl.xaml</DependentUpon>
+    </ClInclude>
     <ClInclude Include="src\ui\MainWindow.xaml.h">
       <DependentUpon>src\ui\MainWindow.xaml</DependentUpon>
     </ClInclude>
+    <ClInclude Include="src\ui\MusicPageControl.xaml.h">
+      <DependentUpon>src\ui\MusicPageControl.xaml</DependentUpon>
+    </ClInclude>
+    <ClInclude Include="src\ui\PageModels.h" />
+    <ClInclude Include="src\ui\ProductivityPageControl.xaml.h">
+      <DependentUpon>src\ui\ProductivityPageControl.xaml</DependentUpon>
+    </ClInclude>
     <ClInclude Include="src\ui\SettingsDiagnosticsPanel.xaml.h">
       <DependentUpon>src\ui\SettingsDiagnosticsPanel.xaml</DependentUpon>
+    </ClInclude>
+    <ClInclude Include="src\ui\SettingsPageControl.xaml.h">
+      <DependentUpon>src\ui\SettingsPageControl.xaml</DependentUpon>
     </ClInclude>
     <ClInclude Include="src\core\MediaDetector.h" />
     <ClInclude Include="src\core\DiscordRPC.h" />
@@ -213,13 +234,19 @@
   </ItemGroup>
   <ItemGroup>
     <ApplicationDefinition Include="src\ui\App.xaml" />
+    <Page Include="src\ui\CreativePageControl.xaml" />
+    <Page Include="src\ui\HomePageControl.xaml" />
     <Page Include="src\ui\MainWindow.xaml" />
+    <Page Include="src\ui\MusicPageControl.xaml" />
+    <Page Include="src\ui\ProductivityPageControl.xaml" />
     <Page Include="src\ui\SettingsDiagnosticsPanel.xaml" />
+    <Page Include="src\ui\SettingsPageControl.xaml" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\core\pch.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="src\core\BrowserNativeMessaging.cpp" />
     <ClCompile Include="src\core\CreativeDetector.cpp" />
     <ClCompile Include="src\core\CreativePresenceManager.cpp" />
     <ClCompile Include="src\core\ProductiveDetector.cpp" />
@@ -229,11 +256,27 @@
     <ClCompile Include="src\ui\App.xaml.cpp">
       <DependentUpon>src\ui\App.xaml</DependentUpon>
     </ClCompile>
+    <ClCompile Include="src\ui\CreativePageControl.xaml.cpp">
+      <DependentUpon>src\ui\CreativePageControl.xaml</DependentUpon>
+    </ClCompile>
+    <ClCompile Include="src\ui\HomePageControl.xaml.cpp">
+      <DependentUpon>src\ui\HomePageControl.xaml</DependentUpon>
+    </ClCompile>
+    <ClCompile Include="src\ui\MainWindow.Init.cpp" />
     <ClCompile Include="src\ui\MainWindow.xaml.cpp">
       <DependentUpon>src\ui\MainWindow.xaml</DependentUpon>
     </ClCompile>
+    <ClCompile Include="src\ui\MusicPageControl.xaml.cpp">
+      <DependentUpon>src\ui\MusicPageControl.xaml</DependentUpon>
+    </ClCompile>
+    <ClCompile Include="src\ui\ProductivityPageControl.xaml.cpp">
+      <DependentUpon>src\ui\ProductivityPageControl.xaml</DependentUpon>
+    </ClCompile>
     <ClCompile Include="src\ui\SettingsDiagnosticsPanel.xaml.cpp">
       <DependentUpon>src\ui\SettingsDiagnosticsPanel.xaml</DependentUpon>
+    </ClCompile>
+    <ClCompile Include="src\ui\SettingsPageControl.xaml.cpp">
+      <DependentUpon>src\ui\SettingsPageControl.xaml</DependentUpon>
     </ClCompile>
     <ClCompile Include="src\core\MediaDetector.cpp" />
     <ClCompile Include="src\core\DiscordRPC.cpp">
@@ -243,19 +286,34 @@
     <ClCompile Include="$(GeneratedFilesDir)module.g.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <Midl Include="src\ui\CreativePageControl.idl">
+      <SubType>Code</SubType>
+      <DependentUpon>src\ui\CreativePageControl.xaml</DependentUpon>
+    </Midl>
+    <Midl Include="src\ui\HomePageControl.idl">
+      <SubType>Code</SubType>
+      <DependentUpon>src\ui\HomePageControl.xaml</DependentUpon>
+    </Midl>
     <Midl Include="src\ui\MainWindow.idl">
       <SubType>Code</SubType>
       <DependentUpon>src\ui\MainWindow.xaml</DependentUpon>
+    </Midl>
+    <Midl Include="src\ui\MusicPageControl.idl">
+      <SubType>Code</SubType>
+      <DependentUpon>src\ui\MusicPageControl.xaml</DependentUpon>
+    </Midl>
+    <Midl Include="src\ui\ProductivityPageControl.idl">
+      <SubType>Code</SubType>
+      <DependentUpon>src\ui\ProductivityPageControl.xaml</DependentUpon>
     </Midl>
     <Midl Include="src\ui\SettingsDiagnosticsPanel.idl">
       <SubType>Code</SubType>
       <DependentUpon>src\ui\SettingsDiagnosticsPanel.xaml</DependentUpon>
     </Midl>
-  </ItemGroup>
-  <ItemGroup>
-    <Text Include="readme.txt">
-      <DeploymentContent>false</DeploymentContent>
-    </Text>
+    <Midl Include="src\ui\SettingsPageControl.idl">
+      <SubType>Code</SubType>
+      <DependentUpon>src\ui\SettingsPageControl.xaml</DependentUpon>
+    </Midl>
   </ItemGroup>
   <ItemGroup>
     <Image Include="Assets\LockScreenLogo.scale-200.png" />

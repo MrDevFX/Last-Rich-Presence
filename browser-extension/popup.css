@@ -68,6 +68,12 @@ h1 {
   border-color: #4d4030;
 }
 
+.pill.disconnected {
+  color: #ff8e8e;
+  background: #332024;
+  border-color: #6b343b;
+}
+
 .card {
   background: color-mix(in srgb, var(--card) 92%, black 8%);
   border: 1px solid var(--line);
@@ -126,39 +132,4 @@ input[type="checkbox"] {
   accent-color: var(--accent);
   width: 16px;
   height: 16px;
-}
-
-.metrics {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.metric {
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  padding: 7px;
-}
-
-.metric .k {
-  display: block;
-  font-size: 10px;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.metric .v {
-  display: block;
-  margin-top: 5px;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.foot {
-  color: var(--muted);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  overflow: hidden;
-  white-space: nowrap;
 }
